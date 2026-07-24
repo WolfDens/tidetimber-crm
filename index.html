@@ -1,0 +1,2070 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deal Ledger — Lead Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<style>
+  html, body { margin: 0; padding: 0; }
+  :root {
+    --ink: #1C2B39;
+    --ink-soft: #46586A;
+    --paper: #F1EDE4;
+    --paper-raised: #FAF8F2;
+    --line: #CFC6B3;
+    --line-strong: #B6AA90;
+    --brass: #A8823D;
+    --brass-dark: #8A6A2E;
+    --active: #3F6B4F;
+    --active-bg: #E3ECE4;
+    --pending: #B8863B;
+    --pending-bg: #F3E9D6;
+    --sold: #8B4A3D;
+    --sold-bg: #EFE1DC;
+    --off: #6B6459;
+    --off-bg: #E7E3D8;
+    --escalate: #6B4E8E;
+    --escalate-bg: #E9E2F0;
+    --dev: #2F5A82;
+    --dev-bg: #DCE6F0;
+    --flip: #8A6A2E;
+    --flip-bg: #EFE6CF;
+    --radius: 3px;
+  }
+
+  * { box-sizing: border-box; }
+
+  #deal-root {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+    min-height: 100%;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .dl-wrap { max-width: 1220px; margin: 0 auto; padding: 28px 24px 80px; }
+
+  .dl-header {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    flex-wrap: wrap; gap: 16px;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 18px; margin-bottom: 22px;
+  }
+  .dl-title-block .eyebrow {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--brass-dark);
+    margin-bottom: 6px;
+  }
+  .dl-title-block h1 { font-family: 'Fraunces', serif; font-weight: 600; font-size: 34px; margin: 0; letter-spacing: -0.01em; }
+  .dl-team-note {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--ink-soft);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .dl-team-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--active); display: inline-block; }
+
+  .dl-stats {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px;
+    background: var(--line); border: 1px solid var(--line); margin-bottom: 26px;
+  }
+  .dl-stat { background: var(--paper-raised); padding: 12px 14px; }
+  .dl-stat .num { font-family: 'IBM Plex Mono', monospace; font-size: 20px; font-weight: 600; }
+  .dl-stat .lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-soft); margin-top: 2px; }
+  .dl-stat.warn .num { color: var(--escalate); }
+
+  .dl-toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+  .dl-search {
+    flex: 1; min-width: 180px; font-family: 'Inter', sans-serif; font-size: 13.5px;
+    padding: 9px 12px; border: 1px solid var(--line-strong); background: var(--paper-raised);
+    border-radius: var(--radius); color: var(--ink);
+  }
+  .dl-search:focus, select:focus, textarea:focus, input:focus { outline: 2px solid var(--brass); outline-offset: 1px; }
+  .dl-select {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 8px 10px;
+    border: 1px solid var(--line-strong); background: var(--paper-raised); color: var(--ink-soft);
+    border-radius: var(--radius); cursor: pointer;
+  }
+  .dl-new-btn {
+    margin-left: auto; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; font-weight: 600;
+    padding: 10px 16px; background: var(--ink); color: var(--paper); border: none;
+    border-radius: var(--radius); cursor: pointer; letter-spacing: 0.02em;
+  }
+  .dl-new-btn:hover { background: var(--brass-dark); }
+
+  .dl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+
+  .dl-card {
+    background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px; position: relative; cursor: pointer;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+  }
+  .dl-card:hover { border-color: var(--ink); transform: translateY(-1px); }
+
+  .dl-topline { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+  .dl-dealid { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: var(--ink-soft); letter-spacing: 0.02em; }
+  .dl-stamp {
+    font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 2px;
+    transform: rotate(1.5deg); white-space: nowrap;
+  }
+  .stamp-active { background: var(--active-bg); color: var(--active); }
+  .stamp-pending { background: var(--pending-bg); color: var(--pending); }
+  .stamp-sold { background: var(--sold-bg); color: var(--sold); }
+  .stamp-off { background: var(--off-bg); color: var(--off); }
+  .stamp-escalate { background: var(--escalate-bg); color: var(--escalate); }
+
+  .dl-card .addr { font-family: 'Fraunces', serif; font-size: 16.5px; font-weight: 500; line-height: 1.3; margin-bottom: 8px; }
+
+  .dl-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .dl-tag { font-family: 'IBM Plex Mono', monospace; font-size: 10px; padding: 2px 7px; border-radius: 2px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .tag-dev { background: var(--dev-bg); color: var(--dev); }
+  .tag-flip { background: var(--flip-bg); color: var(--flip); }
+  .tag-source { background: var(--off-bg); color: var(--off); }
+  .tag-flags { background: var(--sold-bg); color: var(--sold); }
+
+  .dl-card .row {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--ink-soft);
+    border-top: 1px dashed var(--line-strong); padding-top: 9px; margin-top: 2px;
+    display: flex; justify-content: space-between;
+  }
+  .dl-card .contact { font-size: 11.5px; color: var(--ink-soft); margin-top: 6px; }
+
+  .dl-empty { text-align: center; padding: 70px 20px; color: var(--ink-soft); border: 1px dashed var(--line-strong); border-radius: var(--radius); }
+  .dl-empty h3 { font-family: 'Fraunces', serif; font-size: 20px; color: var(--ink); margin-bottom: 6px; }
+  .dl-loading { text-align: center; padding: 60px; color: var(--ink-soft); font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
+
+  .dl-overlay {
+    position: fixed; inset: 0; background: rgba(28,43,57,0.55);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 40px 16px; overflow-y: auto; z-index: 50;
+  }
+  .dl-modal {
+    background: var(--paper-raised); border: 1px solid var(--ink); border-radius: var(--radius);
+    width: 100%; max-width: 640px; padding: 26px 26px 22px;
+  }
+  .dl-modal h2 { font-family: 'Fraunces', serif; font-size: 21px; margin: 0 0 4px; }
+  .dl-modal .subid { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); margin-bottom: 16px; }
+
+  .dl-field { margin-bottom: 13px; }
+  .dl-field label { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-soft); margin-bottom: 4px; }
+  .dl-field input, .dl-field select, .dl-field textarea {
+    width: 100%; font-family: 'Inter', sans-serif; font-size: 13.5px; padding: 8px 10px;
+    border: 1px solid var(--line-strong); background: #fff; border-radius: var(--radius); color: var(--ink);
+  }
+  .dl-field textarea { resize: vertical; min-height: 60px; }
+  .dl-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .dl-row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+  .dl-checkrow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .dl-checkrow input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--ink); flex-shrink: 0; }
+  .dl-checkrow label { font-size: 13px; color: var(--ink); margin: 0; text-transform: none; letter-spacing: normal; font-family: 'Inter', sans-serif; }
+
+  .dl-cat-toggle { display: flex; gap: 16px; padding: 10px 0 4px; }
+  .dl-cat-toggle .dl-checkrow { margin-bottom: 0; }
+
+  .dl-dd-section {
+    border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px;
+    background: var(--paper); margin-top: 6px; margin-bottom: 16px;
+  }
+
+  .dl-dash-modal { max-width: 640px; }
+  .dl-dash-topstats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); margin-bottom: 22px; }
+  .dl-dash-stat { background: var(--paper-raised); padding: 12px 8px; text-align: center; }
+  .dl-dash-stat .num { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 600; color: var(--brass-dark); }
+  .dl-dash-stat .lbl { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-soft); margin-top: 3px; }
+  .dl-dash-section-title { font-family: 'IBM Plex Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-soft); margin: 20px 0 10px; }
+  .dl-dash-row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+  .dl-dash-row .dl-dash-label { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); width: 92px; flex-shrink: 0; text-align: right; }
+  .dl-dash-row .dl-dash-track { flex: 1; background: var(--paper); border: 1px solid var(--line); border-radius: 2px; height: 18px; position: relative; overflow: hidden; }
+  .dl-dash-row .dl-dash-bar { background: var(--brass); height: 100%; border-radius: 1px 0 0 1px; transition: width 0.2s ease; }
+  .dl-dash-row .dl-dash-count { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; font-weight: 600; width: 22px; text-align: right; flex-shrink: 0; }
+  .dl-dash-empty { color: var(--ink-soft); font-size: 12.5px; padding: 8px 0; }
+  .dl-dash-lookup-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .dl-dash-lookup-row label { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); width: 58px; flex-shrink: 0; }
+  .dl-dash-lookup-row select, .dl-dash-lookup-row input[type=date] {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 7px 9px;
+    border: 1px solid var(--line-strong); background: #fff; color: var(--ink); border-radius: var(--radius);
+  }
+  .dl-dash-lookup-row select { flex: 1; min-width: 140px; }
+  .dl-dash-lookup-row .dl-dash-sep { font-size: 11.5px; color: var(--ink-soft); }
+  .dl-dash-result-badge {
+    font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 16px; color: var(--brass-dark);
+    margin-left: auto; min-width: 34px; text-align: right;
+  }
+  @media (max-width: 760px) {
+    .dl-dash-topstats { grid-template-columns: repeat(3, 1fr); }
+    .dl-dash-topstats .dl-dash-stat:nth-child(4), .dl-dash-topstats .dl-dash-stat:nth-child(5) { grid-column: span 1; }
+    .dl-dash-lookup-row label { width: auto; }
+    .dl-dash-lookup-row select { min-width: 100%; }
+    .dl-dash-result-badge { margin-left: 0; }
+  }
+  .dl-dd-section .dd-title {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--sold); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;
+  }
+  .dd-count { background: var(--sold-bg); color: var(--sold); padding: 1px 7px; border-radius: 2px; font-size: 10.5px; }
+
+  .dl-modal-actions {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line);
+  }
+  .dl-btn { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; font-weight: 600; padding: 9px 16px; border-radius: var(--radius); cursor: pointer; border: 1px solid transparent; }
+  .dl-btn-primary { background: var(--ink); color: var(--paper); }
+  .dl-btn-primary:hover { background: var(--brass-dark); }
+  .dl-btn-ghost { background: transparent; color: var(--ink-soft); border-color: var(--line-strong); }
+  .dl-btn-ghost:hover { border-color: var(--ink); color: var(--ink); }
+  .dl-btn-danger { background: transparent; color: var(--sold); border-color: var(--sold); }
+  .dl-btn-danger:hover { background: var(--sold-bg); }
+
+  .dl-detail-body .notes { font-size: 13.5px; line-height: 1.55; color: var(--ink); background: var(--paper); padding: 12px; border-radius: var(--radius); border: 1px solid var(--line); white-space: pre-wrap; margin-top: 6px; }
+  .dl-detail-body .meta-row { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--ink-soft); margin-top: 14px; font-family: 'IBM Plex Mono', monospace; }
+  .dl-detail-body .numbers { display: flex; gap: 20px; font-family: 'IBM Plex Mono', monospace; font-size: 15px; margin: 10px 0 14px; }
+  .dl-detail-body .numbers .n-lbl { font-size: 10px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 2px; }
+  .dl-detail-body .dd-list { margin-top: 6px; }
+  .dl-detail-body .dd-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 4px 0; }
+  .dl-detail-body .dd-item.flagged { color: var(--sold); font-weight: 600; }
+  .dl-detail-body .dd-item .mark { width: 14px; }
+
+  .dl-toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--ink); color: var(--paper); font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px; padding: 10px 18px; border-radius: var(--radius); z-index: 100;
+    opacity: 0; transition: opacity 0.25s ease;
+  }
+  .dl-toast.show { opacity: 1; }
+
+  @media (max-width: 760px) {
+    .dl-stats { grid-template-columns: repeat(3, 1fr); }
+    .dl-row2, .dl-row3 { grid-template-columns: 1fr; }
+  }
+
+  /* --- Follow-up queue --- */
+  .dl-fu-section {
+    border: 1px solid var(--line-strong); border-radius: var(--radius);
+    background: var(--paper-raised); margin-bottom: 26px; overflow: hidden;
+  }
+  .dl-fu-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--paper-raised), var(--paper));
+  }
+  .dl-fu-head h2 {
+    font-family: 'Fraunces', serif; font-weight: 600; font-size: 16.5px; margin: 0;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .dl-fu-head .fu-count {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600;
+    background: var(--escalate-bg); color: var(--escalate); padding: 2px 8px; border-radius: 10px;
+  }
+  .dl-fu-empty { padding: 22px 16px; text-align: center; color: var(--ink-soft); font-size: 13px; }
+  .dl-fu-list { display: flex; flex-direction: column; }
+  .dl-fu-row {
+    display: flex; align-items: center; gap: 14px; padding: 12px 16px;
+    border-bottom: 1px dashed var(--line);
+  }
+  .dl-fu-row:last-child { border-bottom: none; }
+  .dl-fu-row.overdue { background: var(--sold-bg); }
+  .dl-fu-main { flex: 1; min-width: 0; }
+  .dl-fu-addr { font-family: 'Fraunces', serif; font-size: 14.5px; font-weight: 500; margin-bottom: 3px; }
+  .dl-fu-sub { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .dl-fu-badge {
+    font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.03em; padding: 2px 7px; border-radius: 2px;
+  }
+  .badge-followup { background: var(--active-bg); color: var(--active); }
+  .badge-rejected { background: var(--sold-bg); color: var(--sold); }
+  .badge-ghosted { background: var(--off-bg); color: var(--off); }
+  .dl-fu-overdue-tag { color: var(--sold); font-weight: 600; }
+  .dl-fu-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+  .dl-fu-stage-select {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; padding: 6px 8px;
+    border: 1px solid var(--line-strong); background: #fff; border-radius: var(--radius); color: var(--ink-soft);
+    cursor: pointer; max-width: 150px;
+  }
+  .dl-btn-sm { font-size: 11.5px; padding: 7px 11px; }
+  .dl-btn-brass { background: var(--brass); color: #fff; }
+  .dl-btn-brass:hover { background: var(--brass-dark); }
+
+  /* --- Email prep modal --- */
+  .dl-email-modal { max-width: 640px; }
+  .dl-email-meta { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--ink-soft); margin-bottom: 14px; display: flex; flex-direction: column; gap: 3px; }
+  .dl-email-field { margin-bottom: 12px; }
+  .dl-email-field .lbl { font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); margin-bottom: 4px; }
+  .dl-email-subject { font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 600; padding: 9px 11px; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius); }
+  .dl-email-body {
+    font-family: 'Inter', sans-serif; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap;
+    padding: 12px 13px; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius);
+    max-height: 320px; overflow-y: auto;
+  }
+
+  /* --- Template manager --- */
+  .dl-tpl-modal { max-width: 720px; }
+  .dl-tpl-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .dl-tpl-tab {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; font-weight: 600; padding: 7px 12px;
+    border: 1px solid var(--line-strong); background: var(--paper); color: var(--ink-soft);
+    border-radius: var(--radius); cursor: pointer;
+  }
+  .dl-tpl-tab.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .dl-tpl-stage-list { max-height: 460px; overflow-y: auto; padding-right: 4px; }
+  .dl-tpl-stage-block { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; background: var(--paper); }
+  .dl-tpl-stage-block .stage-lbl { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; color: var(--brass-dark); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .dl-tpl-hint { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 14px; line-height: 1.5; }
+  .dl-merge-tags { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: var(--ink-soft); }
+  .dl-merge-tags code { background: var(--off-bg); padding: 1px 5px; border-radius: 2px; }
+
+  /* --- Login gate --- */
+  #dl-auth-overlay { position: fixed; inset: 0; background: var(--paper); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 24px; }
+  .dl-auth-card { background: var(--paper-raised); border: 1px solid var(--ink); border-radius: var(--radius); width: 100%; max-width: 360px; padding: 30px 28px; }
+  .dl-auth-card .eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--brass-dark); margin-bottom: 6px; }
+  .dl-auth-card h1 { font-family: 'Fraunces', serif; font-weight: 600; font-size: 26px; margin: 0 0 18px; }
+  .dl-auth-card label { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-soft); margin-bottom: 4px; }
+  .dl-auth-card input { width: 100%; font-family: 'Inter', sans-serif; font-size: 14px; padding: 10px 11px; border: 1px solid var(--line-strong); background: #fff; border-radius: var(--radius); color: var(--ink); margin-bottom: 13px; }
+  .dl-auth-btn { width: 100%; font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; padding: 11px; background: var(--ink); color: var(--paper); border: none; border-radius: var(--radius); cursor: pointer; letter-spacing: 0.02em; }
+  .dl-auth-btn:hover { background: var(--brass-dark); }
+  .dl-auth-btn:disabled { opacity: 0.6; cursor: default; }
+  .dl-auth-error { color: var(--sold); font-size: 12.5px; margin-bottom: 12px; min-height: 16px; font-family: 'IBM Plex Mono', monospace; }
+  .dl-auth-signout { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); background: none; border: none; cursor: pointer; text-decoration: underline; padding: 0; }
+  .dl-auth-signout:hover { color: var(--ink); }
+
+  /* --- Area read (verdict + reasons) --- */
+  .dl-verdict-toggle { display: flex; gap: 8px; margin-bottom: 10px; }
+  .dl-verdict-btn {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; padding: 7px 14px;
+    border: 1px solid var(--line-strong); background: var(--paper); color: var(--ink-soft);
+    border-radius: var(--radius); cursor: pointer;
+  }
+  .dl-verdict-btn.active { background: var(--vc); color: #fff; border-color: var(--vc); }
+  .dl-area-reasons { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; }
+  @media (max-width: 620px) { .dl-area-reasons { grid-template-columns: 1fr; } }
+
+  /* --- Map modal --- */
+  .dl-map-modal { max-width: 1100px; width: 100%; padding: 20px; }
+  .dl-map-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+  .dl-map-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .dl-map-seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--radius); overflow: hidden; }
+  .dl-map-seg button {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; font-weight: 600; padding: 6px 11px;
+    background: var(--paper); color: var(--ink-soft); border: none; cursor: pointer;
+  }
+  .dl-map-seg button.active { background: var(--ink); color: var(--paper); }
+  .dl-map-canvas { width: 100%; height: 62vh; min-height: 380px; border: 1px solid var(--line-strong); border-radius: var(--radius); }
+  .dl-map-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); }
+  .dl-map-legend .lg { display: inline-flex; align-items: center; gap: 5px; }
+  .dl-map-legend .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dl-map-note { font-size: 11.5px; color: var(--ink-soft); margin-top: 8px; }
+  .dl-iw { font-family: 'Inter', sans-serif; max-width: 240px; color: #1C2B39; }
+  .dl-iw .iw-addr { font-family: 'Fraunces', serif; font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+  .dl-iw .iw-sub { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #46586A; margin-bottom: 6px; }
+  .dl-iw .iw-row { font-size: 12px; margin: 2px 0; }
+  .dl-iw .iw-reasons { font-size: 11px; color: #8B4A3D; margin-top: 4px; }
+  .dl-iw .iw-open { margin-top: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; font-weight: 600; padding: 6px 12px; background: #1C2B39; color: #F1EDE4; border: none; border-radius: 3px; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div id="dl-auth-overlay">
+  <div class="dl-auth-card">
+    <div class="eyebrow">Deal Ledger</div>
+    <h1>Sign in</h1>
+    <div id="dl-auth-error" class="dl-auth-error"></div>
+    <form id="dl-auth-form">
+      <label for="dl-auth-email">Email</label>
+      <input type="email" id="dl-auth-email" autocomplete="username" required />
+      <label for="dl-auth-password">Password</label>
+      <input type="password" id="dl-auth-password" autocomplete="current-password" required />
+      <button type="submit" class="dl-auth-btn" id="dl-auth-submit">Sign in</button>
+    </form>
+  </div>
+</div>
+
+<div id="deal-root" style="display:none;">
+  <div class="dl-wrap">
+    <div class="dl-header">
+      <div class="dl-title-block">
+        <div class="eyebrow">Deal Ledger</div>
+        <h1>Lead Pipeline</h1>
+      </div>
+      <div class="dl-team-note"><span class="dot"></span> <span id="dl-team-note-text">Shared with your team — everyone sees the same list</span> · <button id="dl-signout-btn" class="dl-auth-signout" type="button">Sign out</button></div>
+    </div>
+
+    <div id="dl-fu-section" class="dl-fu-section"></div>
+
+    <div id="dl-stats" class="dl-stats"></div>
+
+    <div class="dl-toolbar">
+      <input id="dl-search" class="dl-search" type="text" placeholder="Search address, contact, or deal ID…" />
+      <select id="dl-status-filter" class="dl-select"><option value="all">All statuses</option></select>
+      <select id="dl-source-filter" class="dl-select"><option value="all">All sources</option></select>
+      <select id="dl-cat-filter" class="dl-select">
+        <option value="all">All categories</option>
+        <option value="dev">New Development</option>
+        <option value="flip">Fix &amp; Flip</option>
+        <option value="both">Both</option>
+      </select>
+      <select id="dl-records-filter" class="dl-select">
+        <option value="pipeline">Active pipeline</option>
+        <option value="reference">Reference / history</option>
+        <option value="all">All records</option>
+      </select>
+      <select id="dl-sort" class="dl-select">
+        <option value="date-desc">Newest first</option>
+        <option value="date-asc">Oldest first</option>
+        <option value="followup-asc">Follow-up date</option>
+      </select>
+      <button class="dl-select" id="dl-templates-btn" style="cursor:pointer;">✎ Manage Templates</button>
+      <button class="dl-select" id="dl-export-btn" style="cursor:pointer;">⬇ Export CSV</button>
+      <button class="dl-select" id="dl-dashboard-btn" style="cursor:pointer;">📊 Dashboard</button>
+      <button class="dl-select" id="dl-map-btn" style="cursor:pointer;">🗺 Map</button>
+      <button class="dl-select" id="dl-geocode-btn" style="cursor:pointer;">📍 Geocode missing</button>
+      <button class="dl-new-btn" id="dl-new-btn">+ New Lead</button>
+    </div>
+
+    <div id="dl-content"><div class="dl-loading">Loading leads…</div></div>
+  </div>
+</div>
+
+<div id="dl-toast" class="dl-toast"></div>
+
+<script>
+(function() {
+  // ============================================================
+  //  CONFIG — paste your own project values here.
+  //  Supabase: Project Settings → API → Project URL + "anon public" key.
+  //  Google Maps key is OPTIONAL — leave the placeholder and the app still
+  //  works; fill it in to auto-geocode addresses for the future map layer.
+  // ============================================================
+  const SUPABASE_URL = 'https://jcnicrsdzyrosgldilns.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_8WEYiPA8lHudShHJF9IHhA_FtXw350j';
+  const GOOGLE_MAPS_API_KEY = 'AIzaSyA8ttzVePEPBJKVBraPac0m6R9gbuOzsNU';   // domain-restricted to the Netlify site
+
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // --- Storage: ONE ROW PER LEAD (fixes the old whole-list overwrite bug) ---
+  // Each save writes only the lead that changed. lat/lng are also mirrored
+  // into real columns so a future map / geospatial query has them ready.
+  async function fetchAllLeads() {
+    const { data, error } = await sb
+      .from('leads')
+      .select('id, data')
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    // The row id is the source of truth. Imported rows may not carry it inside
+    // the JSON blob, so mirror it in or they can't be opened, edited or deleted.
+    return (data || []).map(r => Object.assign({}, r.data, {
+      id: (r.data && r.data.id) ? r.data.id : r.id
+    }));
+  }
+
+  async function upsertLead(lead) {
+    const { error } = await sb.from('leads').upsert(
+      { id: lead.id, data: lead, lat: lead.lat ?? null, lng: lead.lng ?? null },
+      { onConflict: 'id' }
+    );
+    if (error) console.error('upsertLead failed', error);
+    return !error;
+  }
+
+  async function deleteLeadRow(id) {
+    const { error } = await sb.from('leads').delete().eq('id', id);
+    if (error) console.error('deleteLeadRow failed', error);
+    return !error;
+  }
+
+  // --- Settings (email-template overrides) — single shared row ---
+  async function settingsGet(key) {
+    const { data, error } = await sb.from('settings').select('data').eq('key', key).maybeSingle();
+    if (error) throw error;
+    return data ? data.data : null;
+  }
+
+  async function settingsSet(key, value) {
+    const { error } = await sb.from('settings').upsert({ key, data: value }, { onConflict: 'key' });
+    if (error) console.error('settingsSet failed', error);
+    return !error;
+  }
+  // --- end storage layer ---
+
+  // --- Geocoding (map groundwork) ---
+  // Best-effort: if a Google Maps key is set, we turn each lead's address into
+  // lat/lng on save so the future map can drop a pin. No key (or a failed
+  // lookup) just means the lead saves without coordinates — backfill later.
+  let mapsReady = false;
+  let geocoder = null;
+  function initMaps() {
+    if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY.indexOf('YOUR-') === 0) return;
+    window.__dlMapsReady = function () {
+      try { geocoder = new google.maps.Geocoder(); mapsReady = true; }
+      catch (e) { mapsReady = false; }
+    };
+    const s = document.createElement('script');
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + GOOGLE_MAPS_API_KEY + '&libraries=visualization&callback=__dlMapsReady&loading=async';
+    s.async = true;
+    document.head.appendChild(s);
+  }
+  function geocodeAddress(address) {
+    return new Promise(function (resolve) {
+      if (!mapsReady || !geocoder || !address) return resolve(null);
+      geocoder.geocode({ address: address }, function (results, status) {
+        if (status === 'OK' && results && results[0]) {
+          const loc = results[0].geometry.location;
+          resolve({ lat: loc.lat(), lng: loc.lng() });
+        } else {
+          resolve(null);
+        }
+      });
+    });
+  }
+
+  const STORAGE_KEY = 'crm-leads';
+  let leads = [];
+  let loaded = false;
+
+  const SOURCES = [
+    { value: 'Wholesaler', prefix: 'WS' },
+    { value: 'Wholesalers', prefix: 'WS' },
+    { value: 'Inbound', prefix: 'IB' },
+    { value: 'Outbound', prefix: 'OB' },
+    { value: 'Off-Market', prefix: 'OM' },
+    { value: 'Land', prefix: 'LD' },
+    { value: 'Teardown', prefix: 'TD' },
+    { value: 'Other', prefix: 'OT' },
+  ];
+
+  const STATUSES = [
+    'New / Untouched',
+    'For Underwriting',
+    'Offer Sent',
+    'Active Follow-Up',
+    'Escalated – Awaiting Supervisor Review',
+    'Qualified',
+    'Off-Market',
+    'Rejected',
+    'Ghosted',
+    'Dead',
+    'Pass',
+  ];
+
+  const STATUS_STAMP = {
+    'New / Untouched': 'stamp-off',
+    'For Underwriting': 'stamp-pending',
+    'Offer Sent': 'stamp-pending',
+    'Active Follow-Up': 'stamp-active',
+    'Escalated – Awaiting Supervisor Review': 'stamp-escalate',
+    'Qualified': 'stamp-active',
+    'Off-Market': 'stamp-off',
+    'Rejected': 'stamp-sold',
+    'Ghosted': 'stamp-sold',
+    'Dead': 'stamp-sold',
+    'Pass': 'stamp-off',
+  };
+
+  const DD_ITEMS = [
+    { key: 'well', label: 'Well requirement (no access to municipal water)' },
+    { key: 'septic', label: 'Septic requirement (no access to municipal sewer)' },
+    { key: 'proximity', label: 'Proximity/adjacency to commercial, industrial, or apartment complex' },
+    { key: 'legalRoad', label: 'No access to a legal road' },
+    { key: 'fewComps', label: '0 to 1 solid comps available' },
+    { key: 'luxuryComps', label: 'Comps are luxury-tier (ARV > $1,000,000)' },
+    { key: 'zoning', label: 'Zoning restrictions' },
+    { key: 'buffer', label: 'Post construction buffer' },
+    { key: 'floodplain', label: 'Floodplains' },
+    { key: 'floodZone', label: 'Flood Zone' },
+    { key: 'easements', label: 'Easements' },
+  ];
+
+  // --- Area read (the "why we like / avoid this area" brain) ---
+  // Stored per lead as areaVerdict ('like'|'neutral'|'avoid') + areaReasons {key:bool}.
+  // These live in the JSON blob, so this list can grow/rename freely — no DB migration.
+  const AREA_VERDICTS = [
+    { key: 'like',    label: 'Like',    color: '#3F6B4F' },
+    { key: 'neutral', label: 'Neutral', color: '#6B6459' },
+    { key: 'avoid',   label: 'Avoid',   color: '#8B4A3D' },
+  ];
+  const AREA_VERDICT_COLOR = { like: '#3F6B4F', neutral: '#6B6459', avoid: '#8B4A3D', '': '#B6AA90' };
+  // AREA reasons are DURABLE to the location. They aggregate across deals on the
+  // same street/pocket and are the ONLY thing that feeds the map heat.
+  const AREA_REASONS = [
+    { key: 'badStreet',   label: 'Bad street / busy road' },
+    { key: 'badArea',     label: 'Bad area / proximity (commercial, industrial, apartments)' },
+    { key: 'sewer',       label: 'Sewer / septic issue' },
+    { key: 'water',       label: 'Water / well issue' },
+    { key: 'flood',       label: 'Floodplain / flood zone' },
+    { key: 'zoning',      label: 'Zoning restrictions' },
+    { key: 'entitlement', label: 'Entitlement / overlay / permit timeline (HDO, COA, rezoning)' },
+    { key: 'compsThin',   label: 'Comps thin or none available' },
+    { key: 'compsLow',    label: 'Comps will not support the price' },
+    { key: 'outOfArea',   label: 'Outside buy box / too far' },
+    { key: 'comps',       label: 'Poor comps (older records)' },
+    { key: 'other',       label: 'Other' },
+  ];
+
+  // DEAL reasons are specific to THIS parcel or negotiation. Recorded and shown,
+  // but never counted toward map heat -- a narrow lot says nothing about the street.
+  const DEAL_REASONS = [
+    { key: 'lotGeometry', label: 'Lot geometry (narrow, setbacks, subdivided, easement)' },
+    { key: 'topo',        label: 'Topography / slope / grading' },
+    { key: 'costAdd',     label: 'Cost add (crawl space, foundation, lot factor)' },
+    { key: 'sellerTerms', label: 'Seller terms / price expectations' },
+    { key: 'timing',      label: 'Timing (under contract, pending, timeline)' },
+  ];
+
+  // Point-in-time result for this deal -- a separate axis from areaVerdict.
+  const DEAL_OUTCOMES = [
+    { key: '',                        label: '-- not set --' },
+    { key: 'pass',                    label: 'Pass' },
+    { key: 'offer-sent',              label: 'Offer sent' },
+    { key: 'wholesale-only',          label: 'Wholesale only' },
+    { key: 'proceed-with-adjustment', label: 'Proceed with adjustment' },
+  ];
+  function dealOutcomeLabel(k) {
+    const o = DEAL_OUTCOMES.find(x => x.key === (k || ''));
+    return o ? o.label : '';
+  }
+  function dealReasonCount(l) {
+    if (!l.dealReasons) return 0;
+    return DEAL_REASONS.reduce((n, r) => n + (l.dealReasons[r.key] ? 1 : 0), 0);
+  }
+  function areaReasonCount(l) {
+    if (!l.areaReasons) return 0;
+    return AREA_REASONS.reduce((n, r) => n + (l.areaReasons[r.key] ? 1 : 0), 0);
+  }
+
+  // Pin colors for the map, keyed by lead status.
+  const STATUS_COLOR = {
+    'New / Untouched': '#6B6459',
+    'For Underwriting': '#B8863B',
+    'Offer Sent': '#B8863B',
+    'Active Follow-Up': '#3F6B4F',
+    'Escalated – Awaiting Supervisor Review': '#6B4E8E',
+    'Qualified': '#3F6B4F',
+    'Off-Market': '#6B6459',
+    'Rejected': '#8B4A3D',
+    'Ghosted': '#6E6A75',
+    'Dead': '#8B4A3D',
+    'Pass': '#6B6459',
+  };
+
+  // --- Follow-up tracks & cadence ---
+  // "gaps[s-1]" = days to wait before a lead newly placed at stage s is due again.
+  // --- Follow-up cadence ---
+  // gaps[s-1] = days to wait before a lead newly placed at stage s is due again.
+  const TRACKS = {
+    followup: { key: 'followup', label: 'Follow-Up', badgeClass: 'badge-followup', maxStage: 7, gaps: [1,1,1,1,1,1,1] },              // daily
+    rejected: { key: 'rejected', label: 'Rejected',   badgeClass: 'badge-rejected', maxStage: 9, gaps: [14,14,14,14,14,14,14,14,14] }, // every 2 weeks
+    ghosted:  { key: 'ghosted',  label: 'Ghosted',    badgeClass: 'badge-ghosted',  maxStage: 9, gaps: [14,14,14,14,14,14,14,14,14] }, // every 2 weeks
+  };
+  const TRACK_ORDER = ['followup', 'rejected', 'ghosted'];
+
+  const OFFER_TYPES = ['WS Basic', 'WS Far Off', 'OB Basic', 'OB Too Far Off', 'JV', 'Land Offer', 'Teardown Offer'];
+
+  const TEMPLATES_KEY = 'crm-templates';
+  let templates = {};
+  let templatesLoaded = false;
+
+  function tplKey(groupKey, stage) { return groupKey + ':' + stage; }
+
+  // Template groups power both the Manage Templates modal and the email picker dropdown.
+  const TEMPLATE_GROUPS = {
+    offer: { label: 'Initial Offer', items: OFFER_TYPES.map(ot => ({ key: tplKey('offer', ot), stage: ot, label: ot })) },
+    followup: { label: 'Follow-Up', items: Array.from({ length: TRACKS.followup.maxStage }, (_, i) => ({ key: tplKey('followup', i + 1), stage: i + 1, label: 'Day ' + (i + 1) })) },
+    rejected: { label: 'Rejected', items: Array.from({ length: TRACKS.rejected.maxStage }, (_, i) => ({ key: tplKey('rejected', i + 1), stage: i + 1, label: 'Rejected Warm ' + (i + 1) })) },
+    ghosted: { label: 'Ghosted', items: Array.from({ length: TRACKS.ghosted.maxStage }, (_, i) => ({ key: tplKey('ghosted', i + 1), stage: i + 1, label: 'Ghosted ' + (i + 1) })) },
+    special: { label: 'Special', items: [{ key: tplKey('special', 'UW/Contingent'), stage: 'UW/Contingent', label: 'Back on market (UW/Contingent)' }] },
+  };
+  const TEMPLATE_GROUP_ORDER = ['offer', 'followup', 'rejected', 'ghosted', 'special'];
+
+  // Verbatim from the user's template sheet.
+  const DEFAULT_TEMPLATES = {
+    'offer:WS Basic': {
+      subject: 'Our offer on {{PropertyAddress}}',
+      body: "Hey {{FirstName}},\n\nThanks for sending this over!\n\nAfter running the numbers, we’re coming in around {{OfferAmount}}.\n\nIf that works for you, let me know and we'll get things moving on our end.\n\nThanks,",
+    },
+    'offer:WS Far Off': {
+      subject: 'Our offer on {{PropertyAddress}}',
+      body: "Hey {{FirstName}},\n\nThanks for the info on {{PropertyAddress}}.\n\nWe’ve run the numbers and we’re coming in around {{OfferAmount}}. I know that's below where you need to be at this time, but feel free to reach out if the situation changes.\n\nThanks,",
+    },
+    'offer:OB Basic': {
+      subject: 'Cash offer on {{PropertyAddress}}',
+      body: "Hi {{FirstName}},\n\nI came across {{PropertyAddress}} and wanted to see if you’re open to a quick, cash offer.\n\nBased on our numbers, we’d be around {{OfferAmount}}, subject to a quick walkthrough. This would be a cash purchase, as-is, with a 10 to 14 day close, and we cover all standard closing costs.\n\nIf that’s something you’d consider, we'd be happy to take a closer look and firm things up.\n\nAppreciate your time, and I look forward to hearing your thoughts.\n\nThank you,",
+    },
+    'offer:OB Too Far Off': {
+      subject: 'Cash offer on {{PropertyAddress}}',
+      body: "Hi {{FirstName}},\n\nI came across {{PropertyAddress}} and wanted to see if you’re open to a quick, cash offer.\n\nBased on our numbers, we’d be around {{OfferAmount}}, subject to a quick walkthrough. This would be a cash purchase, as-is, with a 10 to 14 day close, and we cover all standard closing costs.\n\nI know that may be below asking, but if your seller is open to something in that range, I’d love to discuss further.\n\nThank you,",
+    },
+    'offer:JV': {
+      subject: 'Re: {{PropertyAddress}} — JV option',
+      body: "Hey {{FirstName}},\n\nThanks for sending the deal over. The property doesn’t fit our current buy box, so we won’t be purchasing it ourselves. If you’re open to a JV and would like help wholesaling it, we’d be happy to assist, just let us know.\n\nJust for reference, this is our current buy box:\n- Within ~1 hour of Charlotte (Rock Hill / Fort Mill OK)\n- 3-4 bedrooms\n- ARV: $200K-$500K\n- Light to moderate rehab\n- No fire damage\n- No full gut rehabs\n- Not on a main road\n- Prefer no septic (unless inspected and in good shape)\n\nThank you,",
+    },
+    'offer:Land Offer': {
+      subject: 'Offer on {{PropertyAddress}}',
+      body: "Hi {{FirstName}},\n\nI wanted to reach out regarding {{PropertyAddress}}.\n\nWe are active land buyers and purchase deals like this regularly for development. We are easy to work with and can close quickly.\n\nBased on our review, we would be around {{OfferAmount}} for the property.\n\nIf this is something your seller would consider, we'd be happy to discuss further and answer any questions.\n\nThank you,",
+    },
+    'offer:Teardown Offer': {
+      subject: 'Offer on {{PropertyAddress}}',
+      body: "Hi {{FirstName}},\n\nI came across your listing for {{PropertyAddress}} and wanted to reach out regarding a potential purchase.\n\nOur offer would be around {{OfferAmount}}. This would be an as-is purchase, and we would cover standard closing costs. We can work with the seller's preferred timeline and make the process as straightforward as possible.\n\nPlease let me know if the seller would be open to something in that range.\n\nThank you,",
+    },
+    'followup:1': { subject: 'Following up on {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nJust following up on our offer for {{PropertyAddress}}. Let me know your thoughts.\n\nThank you," },
+    'followup:2': { subject: 'Checking in on {{PropertyAddress}}', body: "Hey {{FirstName}},\n\nChecking in on {{PropertyAddress}}. Have you had a chance to review our offer?\n\nThank you," },
+    'followup:3': { subject: 'Touching base on {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nTouching base again on {{PropertyAddress}}. Any update on where we stand?\n\nThank you," },
+    'followup:4': { subject: 'Quick follow up on {{PropertyAddress}}', body: "Hey {{FirstName}},\n\nJust a quick follow up on {{PropertyAddress}} to see if the seller had any thoughts on our numbers.\n\nThank you," },
+    'followup:5': { subject: 'Circling back on {{PropertyAddress}}', body: "Hi {{FirstName}}, \n\nI wanted to circle back regarding {{PropertyAddress}}. We are still very interested and can close quickly if the seller is ready. \n\nThank you," },
+    'followup:6': { subject: 'Still ready on {{PropertyAddress}}', body: "Hey {{FirstName}},\n\nChecking in on {{PropertyAddress}}. I know these things can take time, but I wanted to keep this top of mind. We're still comfortable with our offer and ready to go whenever you are. Let me know your thoughts.\n\nThank you," },
+    'followup:7': { subject: 'Where things stand — {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nJust checking in to see where things stand on this. Happy to revisit if needed.\n\nThank you," },
+    'rejected:1': { subject: 'Checking back in on {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nI hope you’re doing well. I wanted to follow up regarding our offer for {{PropertyAddress}}. I understand it wasn’t a fit the first time, but I wanted to check if anything has changed on your end since then.\n\nIf you’re open to discussing the offer again, we’d be happy to do so. If not, no worries - I appreciate your time either way.\n\nThanks," },
+    'rejected:2': { subject: 'Any change on {{PropertyAddress}}?', body: "Hi {{FirstName}},\n\nHope all is well. I just wanted to check in on {{PropertyAddress}}. I noticed the property is still active.\n\nWould the seller be open to revisiting our offer at this time, or has their position changed? Totally understand if it’s still not a fit - just thought I’d reach out again.\n\nThanks for your time," },
+    'rejected:3': { subject: 'Still ready to move — {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nI hope you’re having a good week.\n\nI wanted to touch base once more regarding {{PropertyAddress}}. We're still interested in the property and, more importantly, we're still in a position to move forward immediately if the seller’s situation has shifted.\n\nIf they’ve had a change of heart or are looking for a straightforward sale without the continued market time, feel free to reach out.\n\nThank you," },
+    'rejected:4': { subject: 'Keeping {{PropertyAddress}} on my radar', body: "Hi {{FirstName}},\n\nJust wanted to keep {{PropertyAddress}} on my radar. Any updates on the seller's side?\n\nThanks," },
+    'rejected:5': { subject: 'Any flexibility on {{PropertyAddress}}?', body: "Hi {{FirstName}},\n\nI noticed {{PropertyAddress}} is still on the market, so I wanted to reach out and see if the seller is any more flexible on price now. We'd love to take another look if their expectations have changed.\n\nThank you," },
+    'rejected:6': { subject: 'Checking back on {{PropertyAddress}}', body: "Hi {{FirstName}}, \n\nJust checking back in to see if there's been any change with {{PropertyAddress}}. If not, no worries.\n\nThank you," },
+    'rejected:7': { subject: 'Circling back on {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nJust circling back on {{PropertyAddress}} to see if there have been any updates on your side. If nothing has changed, no problem at all.\n\nThank you," },
+    'rejected:8': { subject: 'Following up on {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nWanted to follow up on {{PropertyAddress}} and see if the seller’s position has shifted at all. If not, I completely understand.\n\nThank you," },
+    'rejected:9': { subject: 'Checking in again on {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nChecking in again regarding {{PropertyAddress}}. If the situation is still the same, feel free to ignore this message. Otherwise, I’d be happy to reconnect anytime.\n\nThank you," },
+    'ghosted:1': { subject: 'Following up on {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nHope you’re doing well. Just wanted to follow up regarding our offer on {{PropertyAddress}}.\n\nI noticed the property is still active, so I wanted to check in and see if there have been any updates. Our offer still stands, and we’d be happy to move forward if it’s something your seller is open to.\n\nPlease let me know your thoughts when you get a chance.\n\nThank you," },
+    'ghosted:2': { subject: 'Circling back on {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nJust wanted to circle back again on our offer for {{PropertyAddress}}.\n\nWe’re still interested and ready to move forward, but haven’t heard back. Please let me know if the seller has had a chance to review the offer.\n\nAppreciate your time and look forward to hearing from you.\n\nThank you," },
+    'ghosted:3': { subject: 'Following up again — {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nFollowing up once more regarding our offer on {{PropertyAddress}}.\n\nSince the property is still active, I wanted to confirm whether the seller has made any decisions. Our offer still stands, and we remain interested.\n\nIf now isn’t the right time, I completely understand, just let me know either way.\n\nThanks," },
+    'ghosted:4': { subject: 'Checking in on {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nJust following up again regarding our offer on {{PropertyAddress}}.\n\nWe’re still interested if the seller is open to moving forward. Since the property is still active, I wanted to check in and see if there have been any updates on their end.\n\nPlease keep me posted when you get a chance.\n\nThank you," },
+    'ghosted:5': { subject: 'Following up on {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nJust following up on our offer for {{PropertyAddress}}.\n\nI wanted to see if there have been any updates from the seller. We're still interested if they're open to moving forward.\n\nPlease let me know when you have a chance.\n\nThank you," },
+    'ghosted:6': { subject: 'Any movement on {{PropertyAddress}}?', body: "Hi {{FirstName}},\n\nHope you're doing well!\n\nI wanted to check in regarding our offer on {{PropertyAddress}}. I noticed the property is still on the market, so I was wondering if the seller's position has changed at all or if there's been any movement.\n\nWe're still interested if they're open to working with us.\n\nThank you," },
+    'ghosted:7': { subject: 'Still in the conversation? — {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nJust wanted to follow up once more regarding our offer on {{PropertyAddress}}.\n\nIf the seller is still considering offers, we'd love to stay in the conversation. Please let me know if there's been any feedback or if anything has changed.\n\nLooking forward to hearing from you.\n\nThank you," },
+    'ghosted:8': { subject: 'Following up on {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nJust wanted to follow up on our offer for {{PropertyAddress}}.\n\nI haven't heard back, so I wanted to check whether the seller had a chance to review it. If the property is still available, we're still interested and would appreciate any update when you have a moment.\n\nThank you," },
+    'ghosted:9': { subject: 'Bumping this up — {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nFollowing up again regarding our offer on {{PropertyAddress}}.\n\nI know things can get busy, so I just wanted to bump this to the top of your inbox. If the seller has made a decision or if there's any feedback you can share, I'd really appreciate it.\n\nLooking forward to hearing from you.\n\nThank you," },
+    'special:UW/Contingent': { subject: 'Re: {{PropertyAddress}} — back on the market', body: "Hey {{FirstName}},\n\nI saw that {{PropertyAddress}} is back on the market. We are still interested in the property and are ready to move quickly.\n\nLet me know if the seller is willing to reconsider our offer.\n\nThank you," },
+  };
+
+  function defaultTemplate(groupKey, stage) {
+    return DEFAULT_TEMPLATES[tplKey(groupKey, stage)] || { subject: '', body: '' };
+  }
+
+  function buildDefaultTemplates() {
+    return JSON.parse(JSON.stringify(DEFAULT_TEMPLATES));
+  }
+
+  async function loadTemplates() {
+    const defaults = buildDefaultTemplates();
+    try {
+      const saved = await settingsGet(TEMPLATES_KEY);
+      templates = Object.assign({}, defaults, saved || {});
+    } catch (e) {
+      templates = defaults;
+    }
+    templatesLoaded = true;
+  }
+
+  async function saveTemplates() {
+    try {
+      return await settingsSet(TEMPLATES_KEY, templates);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function computeNextDate(trackKey, stage, fromISO) {
+    const track = TRACKS[trackKey];
+    const idx = Math.min(Math.max(stage, 1), track.maxStage) - 1;
+    const gap = track.gaps[idx] != null ? track.gaps[idx] : track.gaps[track.gaps.length - 1];
+    const base = fromISO ? new Date(fromISO + 'T00:00:00') : new Date();
+    base.setDate(base.getDate() + gap);
+    return base.toISOString().slice(0, 10);
+  }
+
+  function fillMerge(str, l) {
+    const first = (l.contactName || '').trim().split(/\s+/)[0] || 'there';
+    const map = {
+      '{{FirstName}}': first,
+      '{{PropertyAddress}}': l.address || 'the property',
+      '{{OfferAmount}}': (l.offer !== '' && l.offer != null) ? fmtMoney(l.offer) : 'our offer',
+    };
+    let out = str || '';
+    Object.keys(map).forEach(k => { out = out.split(k).join(map[k]); });
+    return out;
+  }
+
+  function defaultTemplateKeyForLead(l) {
+    if (l.status === 'New / Untouched' && l.offerType) return tplKey('offer', l.offerType);
+    const tk = l.followUpTrack || 'followup';
+    const stage = l.followUpStage || 1;
+    return tplKey(tk, stage);
+  }
+
+  function renderEmailFromKey(key, l) {
+    const tpl = templates[key] || DEFAULT_TEMPLATES[key] || { subject: '', body: '' };
+    return { subject: fillMerge(tpl.subject, l), body: fillMerge(tpl.body, l) };
+  }
+
+  function getRenderedEmail(l) {
+    return renderEmailFromKey(defaultTemplateKeyForLead(l), l);
+  }
+
+  function stageLabel(trackKey, stage) {
+    return trackKey === 'followup' ? ('Day ' + stage) : ('Stage ' + stage);
+  }
+
+  function stageSelectOptionsHtml(l) {
+    let html = '';
+    TRACK_ORDER.forEach(tk => {
+      const track = TRACKS[tk];
+      html += `<optgroup label="${track.label}">`;
+      for (let s = 1; s <= track.maxStage; s++) {
+        const sel = ((l.followUpTrack || 'followup') === tk && (l.followUpStage || 1) === s) ? 'selected' : '';
+        html += `<option value="${tk}:${s}" ${sel}>${track.label} — ${stageLabel(tk, s)}</option>`;
+      }
+      html += `</optgroup>`;
+    });
+    return html;
+  }
+
+  async function advanceFollowUp(id) {
+    const l = leads.find(x => x.id === id);
+    if (!l) return;
+    const tk = l.followUpTrack || 'followup';
+    const track = TRACKS[tk];
+    const current = l.followUpStage || 1;
+    const atMax = current >= track.maxStage;
+    const next = Math.min(current + 1, track.maxStage);
+    l.followUpTrack = tk;
+    l.followUpStage = next;
+    if (!atMax) l.followUpDate = computeNextDate(tk, next);
+    l.lastUpdated = new Date().toISOString().slice(0, 10);
+    render();
+    const ok = await upsertLead(l);
+    toast(atMax ? 'Already at final stage for this track' : `Marked done — now ${track.label} Day ${next}`);
+    if (!ok) toast('Sync failed — check your connection and try again');
+  }
+
+  async function setFollowUpStage(id, trackKey, stage) {
+    const l = leads.find(x => x.id === id);
+    if (!l) return;
+    l.followUpTrack = trackKey;
+    l.followUpStage = stage;
+    l.followUpDate = computeNextDate(trackKey, stage);
+    l.lastUpdated = new Date().toISOString().slice(0, 10);
+    render();
+    const ok = await upsertLead(l);
+    toast(ok ? 'Follow-up stage updated' : 'Sync failed — check your connection and try again');
+  }
+
+  function emailPickerOptionsHtml(l) {
+    const defaultKey = defaultTemplateKeyForLead(l);
+    let html = '';
+    TEMPLATE_GROUP_ORDER.forEach(gk => {
+      const group = TEMPLATE_GROUPS[gk];
+      html += `<optgroup label="${group.label}">`;
+      group.items.forEach(item => {
+        html += `<option value="${item.key}" ${item.key === defaultKey ? 'selected' : ''}>${group.label} — ${item.label}</option>`;
+      });
+      html += `</optgroup>`;
+    });
+    return html;
+  }
+
+  function openEmailModal(id) {
+    const l = leads.find(x => x.id === id);
+    if (!l) return;
+    const defaultKey = defaultTemplateKeyForLead(l);
+    let { subject, body } = renderEmailFromKey(defaultKey, l);
+    const overlay = document.createElement('div');
+    overlay.className = 'dl-overlay';
+    overlay.innerHTML = `
+      <div class="dl-modal dl-email-modal">
+        <h2>Follow-up email</h2>
+        <div class="dl-email-meta">
+          <span>${escapeHtml(l.address || 'Untitled lead')} · ${escapeHtml(l.dealId)}</span>
+          <span>To: ${escapeHtml(l.contactName || '—')}${l.contactEmail ? ' &lt;' + escapeHtml(l.contactEmail) + '&gt;' : ' (no email on file)'}</span>
+        </div>
+        <div class="dl-email-field">
+          <div class="lbl">Template (defaults to this lead's current stage — switch anytime)</div>
+          <select id="dl-email-tpl-picker" class="dl-select" style="width:100%;">${emailPickerOptionsHtml(l)}</select>
+        </div>
+        <div class="dl-email-field">
+          <div class="lbl">Subject</div>
+          <div class="dl-email-subject" id="dl-email-subject">${escapeHtml(subject)}</div>
+        </div>
+        <div class="dl-email-field">
+          <div class="lbl">Body</div>
+          <div class="dl-email-body" id="dl-email-body">${escapeHtml(body)}</div>
+        </div>
+        <div class="dl-modal-actions">
+          <button class="dl-btn dl-btn-ghost" id="dl-email-close">Close</button>
+          <div style="display:flex; gap:8px;">
+            <button class="dl-btn dl-btn-ghost" id="dl-email-copy">Copy text</button>
+            <button class="dl-btn dl-btn-primary" id="dl-email-open">Open in Mail</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
+    document.getElementById('dl-email-close').addEventListener('click', closeOverlay);
+    document.getElementById('dl-email-tpl-picker').addEventListener('change', (e) => {
+      const rendered = renderEmailFromKey(e.target.value, l);
+      subject = rendered.subject;
+      body = rendered.body;
+      document.getElementById('dl-email-subject').textContent = subject;
+      document.getElementById('dl-email-body').textContent = body;
+    });
+    document.getElementById('dl-email-copy').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(`Subject: ${subject}\n\n${body}`);
+        toast('Copied to clipboard');
+      } catch (e) { toast('Copy failed — select the text manually'); }
+    });
+    document.getElementById('dl-email-open').addEventListener('click', () => {
+      const mailto = `mailto:${encodeURIComponent(l.contactEmail || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      window.open(mailto, '_blank');
+    });
+  }
+
+  let tplActiveGroup = 'followup';
+  function openTemplatesModal() {
+    const overlay = document.createElement('div');
+    overlay.className = 'dl-overlay';
+    overlay.innerHTML = `
+      <div class="dl-modal dl-tpl-modal">
+        <h2>Email templates</h2>
+        <div class="dl-tpl-hint">
+          Edit the subject and body for each one — these are pulled from your sheet as a starting point. Merge tags fill in automatically:
+          <div class="dl-merge-tags">
+            <code>{{FirstName}}</code> <code>{{PropertyAddress}}</code> <code>{{OfferAmount}}</code>
+          </div>
+        </div>
+        <div class="dl-tpl-tabs" id="dl-tpl-tabs"></div>
+        <div class="dl-tpl-stage-list" id="dl-tpl-stage-list"></div>
+        <div class="dl-modal-actions">
+          <button class="dl-btn dl-btn-ghost" id="dl-tpl-close">Close</button>
+          <button class="dl-btn dl-btn-primary" id="dl-tpl-save">Save templates</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
+    document.getElementById('dl-tpl-close').addEventListener('click', closeOverlay);
+
+    const tabsEl = document.getElementById('dl-tpl-tabs');
+    const listEl = document.getElementById('dl-tpl-stage-list');
+
+    function renderTabs() {
+      tabsEl.innerHTML = TEMPLATE_GROUP_ORDER.map(gk => `<button type="button" class="dl-tpl-tab ${gk === tplActiveGroup ? 'active' : ''}" data-gk="${gk}">${TEMPLATE_GROUPS[gk].label}</button>`).join('');
+      tabsEl.querySelectorAll('.dl-tpl-tab').forEach(btn => {
+        btn.addEventListener('click', () => { tplActiveGroup = btn.dataset.gk; renderTabs(); renderList(); });
+      });
+    }
+
+    function renderList() {
+      const group = TEMPLATE_GROUPS[tplActiveGroup];
+      let html = '';
+      group.items.forEach(item => {
+        const tpl = templates[item.key] || defaultTemplate(tplActiveGroup, item.stage);
+        html += `
+          <div class="dl-tpl-stage-block">
+            <div class="stage-lbl">${group.label} — ${item.label}</div>
+            <div class="dl-field"><label>Subject</label><input type="text" data-key="${item.key}" data-field="subject" value="${escapeHtml(tpl.subject)}" /></div>
+            <div class="dl-field"><label>Body</label><textarea data-key="${item.key}" data-field="body" style="min-height:110px;">${escapeHtml(tpl.body)}</textarea></div>
+          </div>`;
+      });
+      listEl.innerHTML = html;
+    }
+
+    renderTabs();
+    renderList();
+
+    document.getElementById('dl-tpl-save').addEventListener('click', async () => {
+      document.querySelectorAll('#dl-tpl-stage-list [data-key]').forEach(el => {
+        const key = el.dataset.key;
+        const field = el.dataset.field;
+        if (!templates[key]) templates[key] = { subject: '', body: '' };
+        templates[key][field] = el.value;
+      });
+      const ok = await saveTemplates();
+      toast(ok ? 'Templates saved' : 'Save failed — check your connection and try again.');
+      if (ok) closeOverlay();
+    });
+  }
+
+  function renderFollowUpQueue() {
+    const fuEl = document.getElementById('dl-fu-section');
+    if (!loaded) { fuEl.innerHTML = ''; return; }
+    const today = new Date().toISOString().slice(0, 10);
+    const due = leads.filter(l => l.followUpDate && l.followUpDate <= today)
+      .sort((a, b) => new Date(a.followUpDate) - new Date(b.followUpDate));
+
+    const head = `<div class="dl-fu-head"><h2>📋 Today's Follow-Ups <span class="fu-count">${due.length}</span></h2></div>`;
+
+    if (due.length === 0) {
+      fuEl.innerHTML = head + `<div class="dl-fu-empty">Nothing due today — you're caught up.</div>`;
+      return;
+    }
+
+    const rows = due.map(l => {
+      const tk = l.followUpTrack || 'followup';
+      const track = TRACKS[tk];
+      const stage = l.followUpStage || 1;
+      const overdue = l.followUpDate < today;
+      return `
+        <div class="dl-fu-row ${overdue ? 'overdue' : ''}" data-id="${l.id}">
+          <div class="dl-fu-main">
+            <div class="dl-fu-addr">${escapeHtml(l.address || 'Untitled lead')}</div>
+            <div class="dl-fu-sub">
+              <span class="dl-fu-badge ${track.badgeClass}">${track.label} · ${stageLabel(tk, stage)}</span>
+              <span>${escapeHtml(l.contactName || 'No contact')}</span>
+              ${overdue ? `<span class="dl-fu-overdue-tag">overdue since ${fmtDate(l.followUpDate)}</span>` : ''}
+            </div>
+          </div>
+          <div class="dl-fu-actions">
+            <select class="dl-fu-stage-select" data-action="set-stage" data-id="${l.id}">
+              ${stageSelectOptionsHtml(l)}
+            </select>
+            <button class="dl-btn dl-btn-ghost dl-btn-sm" data-action="prep-email" data-id="${l.id}">Prep Email</button>
+            <button class="dl-btn dl-btn-brass dl-btn-sm" data-action="mark-done" data-id="${l.id}">✓ Done → Next</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    fuEl.innerHTML = head + `<div class="dl-fu-list">${rows}</div>`;
+
+    fuEl.querySelectorAll('[data-action="prep-email"]').forEach(btn => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); openEmailModal(btn.dataset.id); });
+    });
+    fuEl.querySelectorAll('[data-action="mark-done"]').forEach(btn => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); advanceFollowUp(btn.dataset.id); });
+    });
+    fuEl.querySelectorAll('[data-action="set-stage"]').forEach(sel => {
+      sel.addEventListener('click', (e) => e.stopPropagation());
+      sel.addEventListener('change', (e) => {
+        const [tk, stage] = sel.value.split(':');
+        setFollowUpStage(sel.dataset.id, tk, Number(stage));
+      });
+    });
+  }
+
+  const root = document.getElementById('deal-root');
+  const contentEl = document.getElementById('dl-content');
+  const statsEl = document.getElementById('dl-stats');
+  const searchEl = document.getElementById('dl-search');
+  const statusFilterEl = document.getElementById('dl-status-filter');
+  const sourceFilterEl = document.getElementById('dl-source-filter');
+  const catFilterEl = document.getElementById('dl-cat-filter');
+  const recordsFilterEl = document.getElementById('dl-records-filter');
+  const sortEl = document.getElementById('dl-sort');
+  const toastEl = document.getElementById('dl-toast');
+
+  STATUSES.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; statusFilterEl.appendChild(o); });
+  SOURCES.forEach(s => { const o = document.createElement('option'); o.value = s.value; o.textContent = s.value; sourceFilterEl.appendChild(o); });
+
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    setTimeout(() => toastEl.classList.remove('show'), 1800);
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str ?? '';
+    return div.innerHTML;
+  }
+
+  function fmtMoney(n) {
+    if (n === '' || n === null || n === undefined) return '—';
+    return '$' + Number(n).toLocaleString('en-US');
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso + 'T00:00:00');
+    if (isNaN(d)) return '—';
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function flagCount(l) {
+    if (!l.dd) return 0;
+    return DD_ITEMS.reduce((n, item) => n + (l.dd[item.key] ? 1 : 0), 0);
+  }
+
+  function genDealId(sourceVal) {
+    const src = SOURCES.find(s => s.value === sourceVal) || SOURCES[SOURCES.length - 1];
+    const now = new Date();
+    const stamp = now.getFullYear().toString().slice(2) +
+      String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0') +
+      String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0') + String(now.getSeconds()).padStart(2,'0');
+    return src.prefix + '-' + stamp;
+  }
+
+  async function loadLeads() {
+    try {
+      const result = await fetchAllLeads();
+      leads = result || [];
+    } catch (e) {
+      leads = [];
+    }
+    leads = (leads || []).map(l => {
+      const x = {
+        followUpTrack: 'followup', followUpStage: 1, offerType: 'WS Basic',
+        dealOutcome: '', dealReasons: {}, areaVerdict: '', areaReasons: {},
+        ...l
+      };
+      // Imported historical records arrive without pipeline fields -- fill them
+      // in so they sort, filter and display like everything else.
+      if (!x.status) {
+        x.status = (x.dealOutcome === 'offer-sent' || x.dealOutcome === 'proceed-with-adjustment')
+          ? 'Offer Sent' : (x.dealOutcome ? 'Pass' : 'New / Untouched');
+      }
+      if (!x.dealId) x.dealId = 'IM-' + String(x.id || '').slice(-6).toUpperCase();
+      if (!x.dateAdded) x.dateAdded = x.decidedOn || '';
+      if (!x.lastUpdated) x.lastUpdated = x.decidedOn || '';
+      if (!x.dd) x.dd = {};
+      return x;
+    });
+    loaded = true;
+    render();
+  }
+
+  function renderStats() {
+    // Reference records feed the map + area brain, never the pipeline counters.
+    const pipe = leads.filter(l => (l.recordType || 'pipeline') !== 'reference');
+    const total = pipe.length;
+    const untouched = pipe.filter(l => l.status === 'New / Untouched').length;
+    const underwriting = pipe.filter(l => l.status === 'For Underwriting').length;
+    const escalated = pipe.filter(l => l.status === 'Escalated – Awaiting Supervisor Review').length;
+    const qualified = pipe.filter(l => l.status === 'Qualified').length;
+    const today = new Date().toISOString().slice(0,10);
+    const followupToday = pipe.filter(l => l.followUpDate && l.followUpDate <= today).length;
+
+    statsEl.innerHTML = `
+      <div class="dl-stat"><div class="num">${total}</div><div class="lbl">Total Leads</div></div>
+      <div class="dl-stat"><div class="num">${untouched}</div><div class="lbl">New / Untouched</div></div>
+      <div class="dl-stat"><div class="num">${underwriting}</div><div class="lbl">In Underwriting</div></div>
+      <div class="dl-stat warn"><div class="num">${escalated}</div><div class="lbl">Awaiting Supervisor</div></div>
+      <div class="dl-stat"><div class="num">${qualified}</div><div class="lbl">Qualified</div></div>
+      <div class="dl-stat"><div class="num">${followupToday}</div><div class="lbl">Follow-Ups Today</div></div>
+    `;
+  }
+
+  function getFiltered() {
+    const q = searchEl.value.trim().toLowerCase();
+    const statusF = statusFilterEl.value;
+    const sourceF = sourceFilterEl.value;
+    const catF = catFilterEl.value;
+    const recF = recordsFilterEl.value;
+    const sortV = sortEl.value;
+
+    let list = leads.filter(l => {
+      // Imported decision history is reference data for the area brain -- it
+      // still feeds the map, but it stays out of the live pipeline by default.
+      const kind = l.recordType || 'pipeline';
+      if (recF !== 'all' && kind !== recF) return false;
+      if (statusF !== 'all' && l.status !== statusF) return false;
+      if (sourceF !== 'all' && l.source !== sourceF) return false;
+      if (catF === 'dev' && !(l.isNewDev && !l.isFixFlip)) return false;
+      if (catF === 'flip' && !(l.isFixFlip && !l.isNewDev)) return false;
+      if (catF === 'both' && !(l.isNewDev && l.isFixFlip)) return false;
+      if (!q) return true;
+      const hay = `${l.address} ${l.contactName} ${l.contactEmail} ${l.dealId}`.toLowerCase();
+      return hay.includes(q);
+    });
+
+    list.sort((a, b) => {
+      if (sortV === 'date-asc') return new Date(a.dateAdded||0) - new Date(b.dateAdded||0);
+      if (sortV === 'followup-asc') {
+        if (!a.followUpDate && !b.followUpDate) return 0;
+        if (!a.followUpDate) return 1;
+        if (!b.followUpDate) return -1;
+        return new Date(a.followUpDate) - new Date(b.followUpDate);
+      }
+      return new Date(b.dateAdded||0) - new Date(a.dateAdded||0);
+    });
+
+    return list;
+  }
+
+  function render() {
+    renderStats();
+    renderFollowUpQueue();
+    if (!loaded) { contentEl.innerHTML = '<div class="dl-loading">Loading leads…</div>'; return; }
+
+    const list = getFiltered();
+
+    if (leads.length === 0) {
+      contentEl.innerHTML = `<div class="dl-empty"><h3>No leads yet</h3><p>Add your first lead to get the pipeline going.</p></div>`;
+      return;
+    }
+    if (list.length === 0) {
+      contentEl.innerHTML = `<div class="dl-empty"><h3>No matches</h3><p>Try a different search or filter.</p></div>`;
+      return;
+    }
+
+    contentEl.innerHTML = `<div class="dl-grid">${list.map(cardHtml).join('')}</div>`;
+    contentEl.querySelectorAll('.dl-card').forEach(card => {
+      card.addEventListener('click', () => openDetail(card.dataset.id));
+    });
+  }
+
+  function cardHtml(l) {
+    const flags = flagCount(l);
+    return `
+      <div class="dl-card" data-id="${l.id}">
+        <div class="dl-topline">
+          <span class="dl-dealid">${escapeHtml(l.dealId)}</span>
+          <span class="dl-stamp ${STATUS_STAMP[l.status] || 'stamp-off'}">${escapeHtml(l.status)}</span>
+        </div>
+        <div class="addr">${escapeHtml(l.address || 'Untitled lead')}</div>
+        <div class="dl-tags">
+          <span class="dl-tag tag-source">${escapeHtml(l.source)}</span>
+          ${l.recordType === 'reference' ? '<span class="dl-tag tag-source" style="opacity:.7;">Reference</span>' : ''}
+          ${l.isNewDev ? '<span class="dl-tag tag-dev">New Development</span>' : ''}
+          ${l.isFixFlip ? '<span class="dl-tag tag-flip">Fix &amp; Flip</span>' : ''}
+          ${l.isNewDev && flags > 0 ? `<span class="dl-tag tag-flags">${flags} red flag${flags===1?'':'s'}</span>` : ''}
+        </div>
+        <div class="row"><span>ARV ${fmtMoney(l.arv)}</span><span>Offer ${fmtMoney(l.offer)}</span></div>
+        <div class="contact">${escapeHtml(l.contactName || 'No contact yet')}${l.followUpDate ? ` · <span class="dl-fu-badge ${TRACKS[l.followUpTrack||'followup'].badgeClass}">${TRACKS[l.followUpTrack||'followup'].label} ${stageLabel(l.followUpTrack||'followup', l.followUpStage||1)}</span> · ${fmtDate(l.followUpDate)}` : ''}</div>
+      </div>
+    `;
+  }
+
+  function closeOverlay() {
+    const ov = document.querySelector('.dl-overlay');
+    if (ov) ov.remove();
+  }
+
+  function openDetail(id) {
+    const l = leads.find(x => x.id === id);
+    if (!l) return;
+    const flags = flagCount(l);
+
+    const ddHtml = l.isNewDev ? `
+      <div class="dl-dd-section">
+        <div class="dd-title"><span>Due Diligence — Red Flags</span><span class="dd-count">${flags} flagged</span></div>
+        <div class="dd-list">
+          ${DD_ITEMS.map(item => `
+            <div class="dd-item ${l.dd && l.dd[item.key] ? 'flagged' : ''}">
+              <span class="mark">${l.dd && l.dd[item.key] ? '⚠' : '—'}</span>
+              <span>${escapeHtml(item.label)}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : '';
+
+    const areaReasonsHit = AREA_REASONS.filter(r => l.areaReasons && l.areaReasons[r.key]);
+    const areaHtml = (l.areaVerdict || areaReasonsHit.length) ? `
+      <div class="dl-dd-section">
+        <div class="dd-title" style="color:var(--ink-soft);">
+          <span>Area read</span>
+          ${l.areaVerdict ? `<span class="dd-count" style="background:${AREA_VERDICT_COLOR[l.areaVerdict]}22; color:${AREA_VERDICT_COLOR[l.areaVerdict]};">${(AREA_VERDICTS.find(v=>v.key===l.areaVerdict)||{}).label || ''}</span>` : ''}
+        </div>
+        ${areaReasonsHit.length ? `<div class="dd-list">${areaReasonsHit.map(r => `<div class="dd-item flagged"><span class="mark">•</span><span>${escapeHtml(r.label)}</span></div>`).join('')}</div>` : '<div class="dl-dash-empty" style="padding:2px 0;">No reasons tagged.</div>'}
+      </div>
+    ` : '';
+
+    const dealReasonsHit = DEAL_REASONS.filter(r => l.dealReasons && l.dealReasons[r.key]);
+    const dealHtml = (l.dealOutcome || dealReasonsHit.length) ? `
+      <div class="dl-dd-section">
+        <div class="dd-title" style="color:var(--ink-soft);">
+          <span>Deal outcome</span>
+          ${l.dealOutcome ? `<span class="dd-count" style="background:var(--off-bg); color:var(--ink);">${escapeHtml(dealOutcomeLabel(l.dealOutcome))}</span>` : ''}
+        </div>
+        ${dealReasonsHit.length ? `<div class="dd-list">${dealReasonsHit.map(r => `<div class="dd-item"><span class="mark">&bull;</span><span>${escapeHtml(r.label)}</span></div>`).join('')}</div>` : '<div class="dl-dash-empty" style="padding:2px 0;">No deal-specific reasons tagged.</div>'}
+        <div style="font-size:11px; color:var(--ink-soft); margin-top:6px;">Specific to this property &mdash; not counted in the map heat.</div>
+        ${l.decidedBy ? `<div style="font-size:11px; color:var(--ink-soft); margin-top:4px;">Decided by ${escapeHtml(l.decidedBy)}${l.decidedOn ? ' on ' + fmtDate(l.decidedOn) : ''}${l.participants ? ' &middot; thread: ' + escapeHtml(l.participants) : ''}</div>` : ''}
+      </div>
+    ` : '';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'dl-overlay';
+    overlay.innerHTML = `
+      <div class="dl-modal">
+        <h2>${escapeHtml(l.address || 'Untitled lead')}</h2>
+        <div class="subid">${escapeHtml(l.dealId)} · ${escapeHtml(l.source)}</div>
+        <div class="dl-detail-body">
+          <div class="dl-stamp ${STATUS_STAMP[l.status] || 'stamp-off'}" style="position:static; display:inline-block; transform:none; margin-bottom:10px;">${escapeHtml(l.status)}</div>
+          <div class="dl-tags">
+            ${l.isNewDev ? '<span class="dl-tag tag-dev">New Development</span>' : ''}
+            ${l.isFixFlip ? '<span class="dl-tag tag-flip">Fix &amp; Flip</span>' : ''}
+          </div>
+          <div class="numbers">
+            <div><span class="n-lbl">ARV</span>${fmtMoney(l.arv)}</div>
+            <div><span class="n-lbl">Rehab</span>${fmtMoney(l.rehab)}</div>
+            <div><span class="n-lbl">Offer</span>${fmtMoney(l.offer)}</div>
+          </div>
+          ${areaHtml}
+          ${dealHtml}
+          ${ddHtml}
+          <div class="dl-field"><label>Notes</label></div>
+          <div class="notes">${escapeHtml(l.notes || 'No notes yet.')}</div>
+          <div class="meta-row">
+            <span>Contact: ${escapeHtml(l.contactName || '—')}${l.contactEmail ? ' (' + escapeHtml(l.contactEmail) + ')' : ''}</span>
+            <span>Follow-up: ${l.followUpDate ? fmtDate(l.followUpDate) : '—'}</span>
+          </div>
+          <div class="meta-row">
+            <span>Added: ${fmtDate(l.dateAdded)}</span>
+            <span>Updated: ${fmtDate(l.lastUpdated)}</span>
+          </div>
+          <div class="dl-fu-section" style="margin-top:16px;">
+            <div class="dl-fu-head"><h2>Follow-Up</h2></div>
+            <div class="dl-fu-row" style="border-bottom:none;">
+              <div class="dl-fu-main">
+                <div class="dl-fu-sub">
+                  <span class="dl-fu-badge ${TRACKS[l.followUpTrack||'followup'].badgeClass}">${TRACKS[l.followUpTrack||'followup'].label} · ${stageLabel(l.followUpTrack||'followup', l.followUpStage||1)}</span>
+                  <span>${l.followUpDate ? 'Due ' + fmtDate(l.followUpDate) : 'No date set'}</span>
+                </div>
+              </div>
+              <div class="dl-fu-actions">
+                <select class="dl-fu-stage-select" id="dl-detail-stage-select">${stageSelectOptionsHtml(l)}</select>
+                <button class="dl-btn dl-btn-ghost dl-btn-sm" id="dl-detail-prep-email">Prep Email</button>
+                <button class="dl-btn dl-btn-brass dl-btn-sm" id="dl-detail-mark-done">✓ Done → Next</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dl-modal-actions">
+          <button class="dl-btn dl-btn-danger" id="dl-delete-btn">Delete</button>
+          <div style="display:flex; gap:8px;">
+            <button class="dl-btn dl-btn-ghost" id="dl-close-btn">Close</button>
+            <button class="dl-btn dl-btn-primary" id="dl-edit-btn">Edit</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
+    document.getElementById('dl-close-btn').addEventListener('click', closeOverlay);
+    document.getElementById('dl-edit-btn').addEventListener('click', () => { closeOverlay(); openForm(l); });
+    document.getElementById('dl-detail-prep-email').addEventListener('click', () => openEmailModal(l.id));
+    document.getElementById('dl-detail-mark-done').addEventListener('click', async () => { await advanceFollowUp(l.id); closeOverlay(); openDetail(l.id); });
+    document.getElementById('dl-detail-stage-select').addEventListener('change', async (e) => {
+      const [tk, stage] = e.target.value.split(':');
+      await setFollowUpStage(l.id, tk, Number(stage));
+      closeOverlay(); openDetail(l.id);
+    });
+    document.getElementById('dl-delete-btn').addEventListener('click', async () => {
+      if (!confirm('Delete this lead? This can\'t be undone.')) return;
+      leads = leads.filter(x => x.id !== l.id);
+      closeOverlay();
+      render();
+      const ok = await deleteLeadRow(l.id);
+      toast(ok ? 'Lead deleted' : 'Delete failed — check your connection and try again');
+    });
+  }
+
+  function openForm(existing) {
+    const isEdit = !!existing;
+    const l = existing || {
+      id: '', dealId: '', address: '', source: 'Wholesaler', status: 'New / Untouched',
+      isNewDev: false, isFixFlip: false, contactName: '', contactEmail: '',
+      arv: '', rehab: '', offer: '', followUpDate: '', notes: '',
+      followUpTrack: 'followup', followUpStage: 1, offerType: 'WS Basic',
+      dateAdded: new Date().toISOString().slice(0,10), lastUpdated: new Date().toISOString().slice(0,10),
+      dd: {}, lat: null, lng: null,
+      areaVerdict: '', areaReasons: {},
+      dealOutcome: '', dealReasons: {},
+    };
+
+    const overlay = document.createElement('div');
+    overlay.className = 'dl-overlay';
+    overlay.innerHTML = `
+      <div class="dl-modal">
+        <h2>${isEdit ? 'Edit lead' : 'New lead'}</h2>
+        <form id="dl-form">
+          <div class="dl-field"><label>Property address</label><input type="text" id="f-address" value="${escapeHtml(l.address)}" required /></div>
+          <div class="dl-row2">
+            <div class="dl-field"><label>Source</label>
+              <select id="f-source">
+                ${SOURCES.map(s => `<option value="${s.value}" ${l.source===s.value?'selected':''}>${s.value}</option>`).join('')}
+              </select>
+            </div>
+            <div class="dl-field"><label>Status</label>
+              <select id="f-status">
+                ${STATUSES.map(s => `<option value="${s}" ${l.status===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="dl-field"><label>Offer type (for the Initial Offer email)</label>
+            <select id="f-offer-type">
+              ${OFFER_TYPES.map(ot => `<option value="${ot}" ${(l.offerType||'WS Basic')===ot?'selected':''}>${ot}</option>`).join('')}
+            </select>
+          </div>
+          <div class="dl-field">
+            <label>Category</label>
+            <div class="dl-cat-toggle">
+              <div class="dl-checkrow"><input type="checkbox" id="f-dev" ${l.isNewDev?'checked':''} /><label for="f-dev">New Development</label></div>
+              <div class="dl-checkrow"><input type="checkbox" id="f-flip" ${l.isFixFlip?'checked':''} /><label for="f-flip">Fix &amp; Flip</label></div>
+            </div>
+          </div>
+          <div class="dl-field">
+            <label>Area read &mdash; location only (drives the map + heat)</label>
+            <div class="dl-verdict-toggle">
+              ${AREA_VERDICTS.map(v => `<button type="button" class="dl-verdict-btn ${(l.areaVerdict||'')===v.key?'active':''}" data-verdict="${v.key}" style="--vc:${v.color};">${v.label}</button>`).join('')}
+            </div>
+            <div class="dl-area-reasons">
+              ${AREA_REASONS.map(r => `<div class="dl-checkrow"><input type="checkbox" id="ar-${r.key}" data-reason="${r.key}" ${l.areaReasons && l.areaReasons[r.key] ? 'checked' : ''} /><label for="ar-${r.key}">${escapeHtml(r.label)}</label></div>`).join('')}
+            </div>
+          </div>
+          <div class="dl-field">
+            <label>Deal outcome &mdash; this property only</label>
+            <select id="f-deal-outcome">
+              ${DEAL_OUTCOMES.map(o => `<option value="${o.key}" ${(l.dealOutcome||'')===o.key?'selected':''}>${escapeHtml(o.label)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="dl-field">
+            <label>Deal-specific reasons &mdash; recorded, never fed into the heatmap</label>
+            <div class="dl-area-reasons">
+              ${DEAL_REASONS.map(r => `<div class="dl-checkrow"><input type="checkbox" id="dr-${r.key}" data-dreason="${r.key}" ${l.dealReasons && l.dealReasons[r.key] ? 'checked' : ''} /><label for="dr-${r.key}">${escapeHtml(r.label)}</label></div>`).join('')}
+            </div>
+          </div>
+          <div id="f-dd-wrap"></div>
+          <div class="dl-row2">
+            <div class="dl-field"><label>Contact name</label><input type="text" id="f-contact-name" value="${escapeHtml(l.contactName)}" /></div>
+            <div class="dl-field"><label>Contact email</label><input type="email" id="f-contact-email" value="${escapeHtml(l.contactEmail)}" /></div>
+          </div>
+          <div class="dl-row3">
+            <div class="dl-field"><label>ARV ($)</label><input type="number" id="f-arv" value="${l.arv}" min="0" /></div>
+            <div class="dl-field"><label>Rehab ($)</label><input type="number" id="f-rehab" value="${l.rehab}" min="0" /></div>
+            <div class="dl-field"><label>Offer ($)</label><input type="number" id="f-offer" value="${l.offer}" min="0" /></div>
+          </div>
+          <div class="dl-row2">
+            <div class="dl-field"><label>Follow-up track</label>
+              <select id="f-fu-track">
+                ${TRACK_ORDER.map(tk => `<option value="${tk}" ${((l.followUpTrack||'followup')===tk)?'selected':''}>${TRACKS[tk].label}</option>`).join('')}
+              </select>
+            </div>
+            <div class="dl-field"><label>Follow-up stage</label>
+              <select id="f-fu-stage"></select>
+            </div>
+          </div>
+          <div class="dl-field"><label>Next follow-up date</label><input type="date" id="f-followup" value="${l.followUpDate || ''}" />
+            <div style="font-size:11px; color:var(--ink-soft); margin-top:4px;">Auto-fills when you change track/stage — still editable by hand.</div>
+          </div>
+          <div class="dl-field"><label>Notes</label><textarea id="f-notes" placeholder="Anything worth remembering about this lead…">${escapeHtml(l.notes)}</textarea></div>
+          <div class="dl-modal-actions">
+            <button type="button" class="dl-btn dl-btn-ghost" id="dl-cancel-btn">Cancel</button>
+            <button type="submit" class="dl-btn dl-btn-primary">${isEdit ? 'Save changes' : 'Add lead'}</button>
+          </div>
+        </form>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
+    document.getElementById('dl-cancel-btn').addEventListener('click', closeOverlay);
+
+    const ddWrap = document.getElementById('f-dd-wrap');
+    function renderDdChecklist() {
+      const showDd = document.getElementById('f-dev').checked;
+      if (!showDd) { ddWrap.innerHTML = ''; return; }
+      const flaggedNow = DD_ITEMS.reduce((n, item) => n + (l.dd && l.dd[item.key] ? 1 : 0), 0);
+      ddWrap.innerHTML = `
+        <div class="dl-dd-section">
+          <div class="dd-title"><span>Due Diligence — Red Flags</span><span class="dd-count" id="dd-live-count">${flaggedNow} flagged</span></div>
+          ${DD_ITEMS.map(item => `
+            <div class="dl-checkrow">
+              <input type="checkbox" id="dd-${item.key}" data-key="${item.key}" ${l.dd && l.dd[item.key] ? 'checked' : ''} />
+              <label for="dd-${item.key}">${escapeHtml(item.label)}</label>
+            </div>
+          `).join('')}
+        </div>
+      `;
+      ddWrap.querySelectorAll('input[type=checkbox]').forEach(cb => {
+        cb.addEventListener('change', () => {
+          const count = Array.from(ddWrap.querySelectorAll('input[type=checkbox]')).filter(c => c.checked).length;
+          document.getElementById('dd-live-count').textContent = count + ' flagged';
+        });
+      });
+    }
+    document.getElementById('f-dev').addEventListener('change', renderDdChecklist);
+    renderDdChecklist();
+
+    // Area-read verdict buttons (single-select toggle)
+    let selectedVerdict = l.areaVerdict || '';
+    overlay.querySelectorAll('.dl-verdict-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const v = btn.dataset.verdict;
+        selectedVerdict = (selectedVerdict === v) ? '' : v; // click again to clear
+        overlay.querySelectorAll('.dl-verdict-btn').forEach(b => b.classList.toggle('active', b.dataset.verdict === selectedVerdict));
+      });
+    });
+
+    const fuTrackEl = document.getElementById('f-fu-track');
+    const fuStageEl = document.getElementById('f-fu-stage');
+    function populateStageOptions() {
+      const tk = fuTrackEl.value;
+      const max = TRACKS[tk].maxStage;
+      const curStage = ((l.followUpTrack || 'followup') === tk && l.followUpStage) ? l.followUpStage : 1;
+      let html = '';
+      for (let s = 1; s <= max; s++) html += `<option value="${s}" ${s === curStage ? 'selected' : ''}>${stageLabel(tk, s)}</option>`;
+      fuStageEl.innerHTML = html;
+    }
+    populateStageOptions();
+    fuTrackEl.addEventListener('change', () => {
+      populateStageOptions();
+      document.getElementById('f-followup').value = computeNextDate(fuTrackEl.value, Number(fuStageEl.value));
+    });
+    fuStageEl.addEventListener('change', () => {
+      document.getElementById('f-followup').value = computeNextDate(fuTrackEl.value, Number(fuStageEl.value));
+    });
+
+    document.getElementById('dl-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const sourceVal = document.getElementById('f-source').value;
+      const dd = {};
+      DD_ITEMS.forEach(item => {
+        const cb = document.getElementById('dd-' + item.key);
+        dd[item.key] = cb ? cb.checked : false;
+      });
+      const areaReasons = {};
+      AREA_REASONS.forEach(r => {
+        const cb = document.getElementById('ar-' + r.key);
+        areaReasons[r.key] = cb ? cb.checked : false;
+      });
+      const dealReasons = {};
+      DEAL_REASONS.forEach(r => {
+        const cb = document.getElementById('dr-' + r.key);
+        dealReasons[r.key] = cb ? cb.checked : false;
+      });
+
+      const updated = {
+        id: l.id || (Date.now().toString(36) + Math.random().toString(36).slice(2,7)),
+        dealId: l.dealId || genDealId(sourceVal),
+        address: document.getElementById('f-address').value.trim(),
+        source: sourceVal,
+        status: document.getElementById('f-status').value,
+        offerType: document.getElementById('f-offer-type').value,
+        isNewDev: document.getElementById('f-dev').checked,
+        isFixFlip: document.getElementById('f-flip').checked,
+        contactName: document.getElementById('f-contact-name').value.trim(),
+        contactEmail: document.getElementById('f-contact-email').value.trim(),
+        arv: document.getElementById('f-arv').value,
+        rehab: document.getElementById('f-rehab').value,
+        offer: document.getElementById('f-offer').value,
+        followUpDate: document.getElementById('f-followup').value,
+        followUpTrack: fuTrackEl.value,
+        followUpStage: Number(fuStageEl.value),
+        notes: document.getElementById('f-notes').value.trim(),
+        dateAdded: l.dateAdded || new Date().toISOString().slice(0,10),
+        lastUpdated: new Date().toISOString().slice(0,10),
+        offerSentDate: document.getElementById('f-status').value === 'Offer Sent'
+          ? (l.offerSentDate || new Date().toISOString().slice(0,10))
+          : (l.offerSentDate || ''),
+        dd: dd,
+        areaVerdict: selectedVerdict,
+        areaReasons: areaReasons,
+        dealOutcome: document.getElementById('f-deal-outcome').value,
+        dealReasons: dealReasons,
+        lat: (l.lat != null ? l.lat : null),
+        lng: (l.lng != null ? l.lng : null),
+      };
+
+      if (isEdit) {
+        leads = leads.map(x => x.id === updated.id ? updated : x);
+      } else {
+        leads.push(updated);
+      }
+
+      closeOverlay();
+      render();
+
+      // Map groundwork: geocode the address to lat/lng (only when it's new or
+      // changed, to avoid needless lookups). Best-effort — never blocks a save.
+      const addrChanged = !isEdit || (l.address !== updated.address);
+      if (updated.address && (addrChanged || updated.lat == null)) {
+        try {
+          const geo = await geocodeAddress(updated.address);
+          if (geo) { updated.lat = geo.lat; updated.lng = geo.lng; }
+        } catch (e) { /* ignore — save proceeds without coordinates */ }
+      }
+
+      const ok = await upsertLead(updated);
+      toast(ok ? (isEdit ? 'Lead updated' : 'Lead added') : 'Sync failed — check your connection and try again');
+    });
+  }
+
+  document.getElementById('dl-new-btn').addEventListener('click', () => openForm(null));
+  document.getElementById('dl-templates-btn').addEventListener('click', () => openTemplatesModal());
+  document.getElementById('dl-export-btn').addEventListener('click', exportLeadsCSV);
+  document.getElementById('dl-dashboard-btn').addEventListener('click', openDashboardModal);
+  document.getElementById('dl-map-btn').addEventListener('click', openMapModal);
+  document.getElementById('dl-geocode-btn').addEventListener('click', backfillGeocodes);
+
+  // Repeatable backfill: fills lat/lng for any lead that has an address but no
+  // coordinates. Runs in the page so it uses the referrer-locked Maps key.
+  // Safe to re-run -- it skips anything already geocoded.
+  async function backfillGeocodes() {
+    if (!mapsReady) { toast('Maps not loaded yet -- give it a second and retry'); return; }
+    const todo = leads.filter(l => l.address && !(typeof l.lat === 'number' && !isNaN(l.lat)));
+    if (!todo.length) { toast('Everything with an address already has coordinates'); return; }
+    if (!confirm('Look up coordinates for ' + todo.length + ' lead(s)?')) return;
+    const btn = document.getElementById('dl-geocode-btn');
+    const label = btn.textContent;
+    btn.disabled = true;
+    let done = 0, missed = 0;
+    const misses = [];
+    for (const l of todo) {
+      btn.textContent = 'Geocoding ' + (done + missed + 1) + '/' + todo.length;
+      // Most imported addresses are street-only. Bias to NC so a bare street
+      // name doesn't match an identically-named road in another state.
+      const q = /\b(NC|SC|North Carolina|South Carolina)\b/i.test(l.address)
+        ? l.address : (l.address + ', NC');
+      try {
+        const geo = await geocodeAddress(q);
+        if (geo) { l.lat = geo.lat; l.lng = geo.lng; await upsertLead(l); done++; }
+        else { missed++; misses.push(l.address); }
+      } catch (e) { missed++; misses.push(l.address); }
+      await new Promise(r => setTimeout(r, 120));
+    }
+    btn.disabled = false;
+    btn.textContent = label;
+    render();
+    if (misses.length) console.log('Could not geocode:', misses);
+    toast('Geocoded ' + done + (missed ? ' -- ' + missed + ' failed (see console)' : ''));
+  }
+
+  function isoDate(d) { return d.toISOString().slice(0, 10); }
+
+  // Monday-start week key, labeled by the week's start date
+  function weekKeyOf(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    const day = (d.getDay() + 6) % 7; // 0 = Monday
+    d.setDate(d.getDate() - day);
+    return isoDate(d);
+  }
+  function monthKeyOf(dateStr) { return dateStr.slice(0, 7); } // YYYY-MM
+
+  function offersSentDates() {
+    return leads.map(l => l.offerSentDate).filter(Boolean);
+  }
+
+  function countsByWeek(numWeeks) {
+    const dates = offersSentDates();
+    const buckets = [];
+    const today = new Date();
+    for (let i = numWeeks - 1; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i * 7);
+      const key = weekKeyOf(isoDate(d));
+      buckets.push({ key, count: 0 });
+    }
+    dates.forEach(ds => {
+      const key = weekKeyOf(ds);
+      const b = buckets.find(x => x.key === key);
+      if (b) b.count++;
+    });
+    return buckets;
+  }
+
+  function countsByMonth(numMonths) {
+    const dates = offersSentDates();
+    const buckets = [];
+    const today = new Date();
+    for (let i = numMonths - 1; i >= 0; i--) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      buckets.push({ key, count: 0 });
+    }
+    dates.forEach(ds => {
+      const key = monthKeyOf(ds);
+      const b = buckets.find(x => x.key === key);
+      if (b) b.count++;
+    });
+    return buckets;
+  }
+
+  function formatWeekLabel(key) {
+    const d = new Date(key + 'T00:00:00');
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  function formatMonthLabel(key) {
+    const [y, m] = key.split('-');
+    const d = new Date(Number(y), Number(m) - 1, 1);
+    return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+  }
+
+  function shiftDate(d, days) { const nd = new Date(d); nd.setDate(nd.getDate() + days); return nd; }
+
+  function buildWeekOptions(numWeeks) {
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; i < numWeeks; i++) {
+      const key = weekKeyOf(isoDate(shiftDate(new Date(), -i * 7)));
+      if (!seen.has(key)) { seen.add(key); out.push(key); }
+    }
+    return out;
+  }
+
+  function weekRangeLabel(key) {
+    const start = new Date(key + 'T00:00:00');
+    const end = shiftDate(start, 6);
+    const fmt = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return `${fmt(start)} – ${fmt(end)}, ${end.getFullYear()}`;
+  }
+
+  function buildMonthOptions(numMonths) {
+    const out = [];
+    const today = new Date();
+    for (let i = 0; i < numMonths; i++) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    return out;
+  }
+
+  function monthRangeLabel(key) {
+    const [y, m] = key.split('-');
+    const d = new Date(Number(y), Number(m) - 1, 1);
+    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+
+  function countForWeek(key) { return offersSentDates().filter(d => weekKeyOf(d) === key).length; }
+  function countForMonth(key) { return offersSentDates().filter(d => monthKeyOf(d) === key).length; }
+  function countForRange(fromStr, toStr) {
+    if (!fromStr || !toStr) return null;
+    const lo = fromStr <= toStr ? fromStr : toStr;
+    const hi = fromStr <= toStr ? toStr : fromStr;
+    return offersSentDates().filter(d => d >= lo && d <= hi).length;
+  }
+
+  function barRows(buckets, labelFn) {
+    const max = Math.max(1, ...buckets.map(b => b.count));
+    return buckets.map(b => `
+      <div class="dl-dash-row">
+        <span class="dl-dash-label">${labelFn(b.key)}</span>
+        <span class="dl-dash-track"><span class="dl-dash-bar" style="width:${(b.count / max) * 100}%;"></span></span>
+        <span class="dl-dash-count">${b.count}</span>
+      </div>`).join('');
+  }
+
+  function openMapModal() {
+    let mapColorMode = 'status';
+    let mapHeatOn = false;
+
+    const mapped = leads.filter(l => typeof l.lat === 'number' && typeof l.lng === 'number' && !isNaN(l.lat) && !isNaN(l.lng));
+    const unmapped = leads.length - mapped.length;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'dl-overlay';
+    overlay.innerHTML = `
+      <div class="dl-modal dl-map-modal">
+        <div class="dl-map-head">
+          <div>
+            <h2 style="margin:0;">Deal Map</h2>
+            <div class="subid">${mapped.length} plotted${unmapped ? ` · ${unmapped} not yet geocoded` : ''}</div>
+          </div>
+          <div class="dl-map-controls">
+            <div class="dl-map-seg" id="dl-map-colormode">
+              <button type="button" data-mode="status" class="active">Color: Status</button>
+              <button type="button" data-mode="verdict">Color: Area read</button>
+            </div>
+            <button class="dl-select" id="dl-map-heat" style="cursor:pointer;">🔥 Heatmap: Off</button>
+            <button class="dl-btn dl-btn-ghost" id="dl-map-close">Close</button>
+          </div>
+        </div>
+        <div class="dl-map-canvas" id="dl-map-canvas"></div>
+        <div class="dl-map-legend" id="dl-map-legend"></div>
+        ${mapped.length === 0 ? `<div class="dl-map-note">No leads have coordinates yet. Save a lead that has an address and it'll appear here.</div>` : ''}
+        ${!mapsReady ? `<div class="dl-map-note">Google Maps isn't loaded — check the Maps API key.</div>` : ''}
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
+    document.getElementById('dl-map-close').addEventListener('click', closeOverlay);
+
+    if (!mapsReady || !window.google || !google.maps) return;
+
+    const canvas = document.getElementById('dl-map-canvas');
+    const center = mapped.length
+      ? { lat: mapped.reduce((s, l) => s + l.lat, 0) / mapped.length, lng: mapped.reduce((s, l) => s + l.lng, 0) / mapped.length }
+      : { lat: 35.2271, lng: -80.8431 }; // Charlotte, NC — center of the buy box
+    const map = new google.maps.Map(canvas, {
+      center, zoom: mapped.length ? 10 : 9,
+      mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
+    });
+
+    const info = new google.maps.InfoWindow();
+    let markers = [];
+    let heat = null;
+
+    function pinColor(l) {
+      return mapColorMode === 'verdict'
+        ? (AREA_VERDICT_COLOR[l.areaVerdict || ''] || '#B6AA90')
+        : (STATUS_COLOR[l.status] || '#6B6459');
+    }
+
+    function iwHtml(l) {
+      const reasons = AREA_REASONS.filter(r => l.areaReasons && l.areaReasons[r.key]).map(r => r.label);
+      const verd = l.areaVerdict ? (AREA_VERDICTS.find(v => v.key === l.areaVerdict) || {}).label : '';
+      return `<div class="dl-iw">
+        <div class="iw-addr">${escapeHtml(l.address || 'Untitled')}</div>
+        <div class="iw-sub">${escapeHtml(l.dealId)} · ${escapeHtml(l.status)}</div>
+        <div class="iw-row">ARV ${fmtMoney(l.arv)} · Offer ${fmtMoney(l.offer)}</div>
+        ${verd ? `<div class="iw-row">Area read: <strong>${escapeHtml(verd)}</strong></div>` : ''}
+        ${l.dealOutcome ? `<div class="iw-row">Outcome: <strong>${escapeHtml(dealOutcomeLabel(l.dealOutcome))}</strong></div>` : ''}
+        ${reasons.length ? `<div class="iw-reasons">⚑ ${reasons.map(escapeHtml).join(', ')}</div>` : ''}
+        ${dealReasonCount(l) ? `<div class="iw-row" style="color:#46586A; font-size:11px;">Deal-specific: ${DEAL_REASONS.filter(r => l.dealReasons && l.dealReasons[r.key]).map(r => escapeHtml(r.label)).join(', ')}</div>` : ''}
+        ${l.notes ? `<div class="iw-row" style="color:#46586A;">${escapeHtml(l.notes.slice(0, 120))}${l.notes.length > 120 ? '…' : ''}</div>` : ''}
+        <button class="iw-open" data-openid="${l.id}">Open record →</button>
+      </div>`;
+    }
+
+    function buildMarkers() {
+      markers.forEach(m => m.setMap(null));
+      markers = [];
+      mapped.forEach(l => {
+        const marker = new google.maps.Marker({
+          position: { lat: l.lat, lng: l.lng }, map, title: l.address || '',
+          icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: pinColor(l), fillOpacity: 0.95, strokeColor: '#1C2B39', strokeWeight: 1 },
+        });
+        marker.addListener('click', () => {
+          info.setContent(iwHtml(l));
+          info.open(map, marker);
+          google.maps.event.addListenerOnce(info, 'domready', () => {
+            const btn = document.querySelector('.iw-open[data-openid="' + l.id + '"]');
+            if (btn) btn.addEventListener('click', () => { closeOverlay(); openDetail(l.id); });
+          });
+        });
+        markers.push(marker);
+      });
+    }
+
+    function buildHeat() {
+      if (heat) { heat.setMap(null); heat = null; }
+      if (!mapHeatOn) return;
+      // Heat is a LOCATION signal. A lead contributes only when someone made an
+      // explicit "avoid" call on the area. Records that carry notes but no area
+      // verdict -- deal-specific passes -- stay off the heatmap entirely, so a
+      // narrow lot or a bad price never paints a street red.
+      const pts = mapped
+        .filter(l => l.areaVerdict === 'avoid')
+        .map(l => ({
+          location: new google.maps.LatLng(l.lat, l.lng),
+          weight: 3 + areaReasonCount(l)
+        }));
+      if (!pts.length) return;
+      heat = new google.maps.visualization.HeatmapLayer({ data: pts, radius: 35, opacity: 0.7, map });
+    }
+
+    function renderLegend() {
+      const el = document.getElementById('dl-map-legend');
+      if (mapColorMode === 'verdict') {
+        el.innerHTML = AREA_VERDICTS.map(v => `<span class="lg"><span class="dot" style="background:${v.color};"></span>${v.label}</span>`).join('')
+          + `<span class="lg"><span class="dot" style="background:#B6AA90;"></span>No read</span>`;
+      } else {
+        const present = [...new Set(mapped.map(l => l.status))];
+        el.innerHTML = present.map(s => `<span class="lg"><span class="dot" style="background:${STATUS_COLOR[s] || '#6B6459'};"></span>${escapeHtml(s)}</span>`).join('');
+      }
+      if (mapHeatOn) el.innerHTML += `<span class="lg"><span class="dot" style="background:linear-gradient(90deg,#3F6B4F,#B8863B,#8B4A3D);"></span>Heatmap = caution density</span>`;
+    }
+
+    buildMarkers();
+    buildHeat();
+    renderLegend();
+
+    overlay.querySelectorAll('#dl-map-colormode button').forEach(b => {
+      b.addEventListener('click', () => {
+        mapColorMode = b.dataset.mode;
+        overlay.querySelectorAll('#dl-map-colormode button').forEach(x => x.classList.toggle('active', x.dataset.mode === mapColorMode));
+        buildMarkers(); renderLegend();
+      });
+    });
+    document.getElementById('dl-map-heat').addEventListener('click', () => {
+      mapHeatOn = !mapHeatOn;
+      document.getElementById('dl-map-heat').textContent = mapHeatOn ? '🔥 Heatmap: On' : '🔥 Heatmap: Off';
+      buildHeat(); renderLegend();
+    });
+  }
+
+  function openDashboardModal() {
+    const today = isoDate(new Date());
+    const thisWeekKey = weekKeyOf(today);
+    const thisMonthKey = monthKeyOf(today);
+    const lastWeekKey = weekKeyOf(isoDate(shiftDate(new Date(), -7)));
+    const lastMonthDate = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1);
+    const lastMonthKey = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
+    const dates = offersSentDates();
+
+    const todayCount = dates.filter(d => d === today).length;
+    const weekCount = countForWeek(thisWeekKey);
+    const lastWeekCount = countForWeek(lastWeekKey);
+    const monthCount = countForMonth(thisMonthKey);
+    const lastMonthCount = countForMonth(lastMonthKey);
+
+    const weeklyBuckets = countsByWeek(8);
+    const monthlyBuckets = countsByMonth(6);
+    const weekOptions = buildWeekOptions(26);
+    const monthOptions = buildMonthOptions(24);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'dl-overlay';
+    overlay.innerHTML = `
+      <div class="dl-modal dl-dash-modal">
+        <h2>Offers Sent Dashboard</h2>
+        <div class="subid">Tracks every lead the moment its status is set to "Offer Sent"</div>
+
+        <div class="dl-dash-topstats">
+          <div class="dl-dash-stat"><div class="num">${todayCount}</div><div class="lbl">Today</div></div>
+          <div class="dl-dash-stat"><div class="num">${weekCount}</div><div class="lbl">This week</div></div>
+          <div class="dl-dash-stat"><div class="num">${lastWeekCount}</div><div class="lbl">Last week</div></div>
+          <div class="dl-dash-stat"><div class="num">${monthCount}</div><div class="lbl">This month</div></div>
+          <div class="dl-dash-stat"><div class="num">${lastMonthCount}</div><div class="lbl">Last month</div></div>
+        </div>
+
+        <div class="dl-dash-section-title">Weekly — last 8 weeks (starting Monday)</div>
+        ${dates.length ? barRows(weeklyBuckets, formatWeekLabel) : '<div class="dl-dash-empty">No offers sent yet.</div>'}
+
+        <div class="dl-dash-section-title">Monthly — last 6 months</div>
+        ${dates.length ? barRows(monthlyBuckets, formatMonthLabel) : '<div class="dl-dash-empty">No offers sent yet.</div>'}
+
+        <div class="dl-dash-section-title">Look up a specific period</div>
+        <div class="dl-dash-lookup-row">
+          <label>Week</label>
+          <select id="dl-dash-week-select">
+            ${weekOptions.map(k => `<option value="${k}">${weekRangeLabel(k)}</option>`).join('')}
+          </select>
+          <span class="dl-dash-result-badge" id="dl-dash-week-result">0</span>
+        </div>
+        <div class="dl-dash-lookup-row">
+          <label>Month</label>
+          <select id="dl-dash-month-select">
+            ${monthOptions.map(k => `<option value="${k}">${monthRangeLabel(k)}</option>`).join('')}
+          </select>
+          <span class="dl-dash-result-badge" id="dl-dash-month-result">0</span>
+        </div>
+        <div class="dl-dash-lookup-row">
+          <label>Custom</label>
+          <input type="date" id="dl-dash-custom-from" value="${today}" />
+          <span class="dl-dash-sep">to</span>
+          <input type="date" id="dl-dash-custom-to" value="${today}" />
+          <span class="dl-dash-result-badge" id="dl-dash-custom-result">—</span>
+        </div>
+
+        <div class="dl-modal-actions">
+          <button class="dl-btn dl-btn-ghost" id="dl-dash-close">Close</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
+    document.getElementById('dl-dash-close').addEventListener('click', closeOverlay);
+
+    const weekSelect = document.getElementById('dl-dash-week-select');
+    const weekResult = document.getElementById('dl-dash-week-result');
+    const updateWeekResult = () => { weekResult.textContent = countForWeek(weekSelect.value); };
+    weekSelect.addEventListener('change', updateWeekResult);
+    updateWeekResult();
+
+    const monthSelect = document.getElementById('dl-dash-month-select');
+    const monthResult = document.getElementById('dl-dash-month-result');
+    const updateMonthResult = () => { monthResult.textContent = countForMonth(monthSelect.value); };
+    monthSelect.addEventListener('change', updateMonthResult);
+    updateMonthResult();
+
+    const fromInput = document.getElementById('dl-dash-custom-from');
+    const toInput = document.getElementById('dl-dash-custom-to');
+    const customResult = document.getElementById('dl-dash-custom-result');
+    const updateCustomResult = () => {
+      const c = countForRange(fromInput.value, toInput.value);
+      customResult.textContent = c === null ? '—' : c;
+    };
+    fromInput.addEventListener('change', updateCustomResult);
+    toInput.addEventListener('change', updateCustomResult);
+    updateCustomResult();
+  }
+
+  function exportLeadsCSV() {
+    if (!leads.length) { toast('No leads to export yet'); return; }
+    const cols = ['dealId','address','source','status','dealOutcome','areaVerdict','offerType','isNewDev','isFixFlip',
+      'contactName','contactEmail','arv','rehab','offer','offerSentDate','followUpDate','followUpTrack',
+      'followUpStage','decidedBy','decidedOn','notes','dateAdded','lastUpdated'];
+    const escCsv = (v) => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const rows = [cols.join(',')];
+    leads.forEach(l => rows.push(cols.map(c => escCsv(l[c])).join(',')));
+    const csv = rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `deal-ledger-leads-${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  searchEl.addEventListener('input', render);
+  statusFilterEl.addEventListener('change', render);
+  sourceFilterEl.addEventListener('change', render);
+  catFilterEl.addEventListener('change', render);
+  recordsFilterEl.addEventListener('change', render);
+  sortEl.addEventListener('change', render);
+
+  // ============================================================
+  //  Auth gate — nobody sees the pipeline without signing in.
+  //  Team accounts are created invite-only from the Supabase
+  //  dashboard; this page only ever signs people IN, never signs
+  //  them up, so no one can self-register.
+  // ============================================================
+  const authOverlay = document.getElementById('dl-auth-overlay');
+  const authForm = document.getElementById('dl-auth-form');
+  const authError = document.getElementById('dl-auth-error');
+  const authSubmit = document.getElementById('dl-auth-submit');
+  const signoutBtn = document.getElementById('dl-signout-btn');
+  let appStarted = false;
+
+  async function startApp(session) {
+    authOverlay.style.display = 'none';
+    root.style.display = 'block';
+    const noteEl = document.getElementById('dl-team-note-text');
+    if (noteEl && session && session.user) {
+      noteEl.textContent = 'Signed in as ' + session.user.email + ' — shared team list';
+    }
+    if (appStarted) return;
+    appStarted = true;
+    await loadTemplates();
+    await loadLeads();
+  }
+
+  function showLogin() {
+    root.style.display = 'none';
+    authOverlay.style.display = 'flex';
+  }
+
+  authForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    authError.textContent = '';
+    authSubmit.disabled = true;
+    authSubmit.textContent = 'Signing in…';
+    const email = document.getElementById('dl-auth-email').value.trim();
+    const password = document.getElementById('dl-auth-password').value;
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    authSubmit.disabled = false;
+    authSubmit.textContent = 'Sign in';
+    if (error) {
+      authError.textContent = /invalid login/i.test(error.message || '')
+        ? 'Wrong email or password.'
+        : (error.message || 'Sign in failed');
+      return;
+    }
+    startApp(data.session);
+  });
+
+  if (signoutBtn) {
+    signoutBtn.addEventListener('click', async () => {
+      await sb.auth.signOut();
+      location.reload();
+    });
+  }
+
+  // Load Google Maps (for geocoding) if a key is configured — safe no-op otherwise.
+  initMaps();
+
+  (async () => {
+    try {
+      const { data } = await sb.auth.getSession();
+      if (data && data.session) { startApp(data.session); return; }
+    } catch (e) { /* fall through to login */ }
+    showLogin();
+  })();
+})();
+</script>
+</body>
+</html>
