@@ -548,6 +548,21 @@
     'Pass',
   ];
 
+  // New-lead vocabularies (Pat #1, #9). NEW leads pick from these trimmed lists;
+  // existing leads keep whatever value they already hold. The filter dropdowns
+  // still use the full SOURCES/STATUSES lists, so legacy values stay searchable.
+  const ACTIVE_SOURCES = ['Wholesaler', 'Inbound', 'Outbound'];               // #1: drop Wholesalers dup + Off-Market/Land/Teardown/Other
+  const ACTIVE_STATUSES = STATUSES.filter(s => s !== 'For Underwriting');     // #9: drop "For Underwriting"
+
+  // Build <option>s from an active list. If the record already holds a retired
+  // value, keep it in the list (still selected) so editing never silently
+  // reassigns it — "hide for new, keep old."
+  function optionsPreserving(activeValues, current) {
+    const vals = activeValues.slice();
+    if (current && !vals.includes(current)) vals.unshift(current);
+    return vals.map(v => `<option value="${escapeHtml(v)}" ${current === v ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('');
+  }
+
   const STATUS_STAMP = {
     'New / Untouched': 'stamp-off',
     'For Underwriting': 'stamp-pending',
@@ -599,6 +614,12 @@
     { key: 'compsLow',    label: 'Comps will not support the price' },
     { key: 'outOfArea',   label: 'Outside buy box / too far' },
     { key: 'comps',       label: 'Poor comps (older records)' },
+    // #8: net-new items merged up from the retired "Due Diligence — Red Flags" list.
+    // (well/septic/proximity/fewComps/zoning/flood were already covered above.)
+    { key: 'legalRoad',   label: 'No access to a legal road' },
+    { key: 'luxuryComps', label: 'Comps are luxury-tier (ARV > $1,000,000)' },
+    { key: 'buffer',      label: 'Post construction buffer' },
+    { key: 'easements',   label: 'Easements' },
     { key: 'other',       label: 'Other' },
   ];
 
@@ -784,7 +805,9 @@
   }
 
   function defaultTemplateKeyForLead(l) {
-    if (l.status === 'New / Untouched' && l.offerType) return tplKey('offer', l.offerType);
+    // #7: default the Prep Email to the OFFER template for fresh leads and for
+    // leads whose status is "Offer Sent" (offer templates already live in Manage Templates).
+    if ((l.status === 'New / Untouched' || l.status === 'Offer Sent') && l.offerType) return tplKey('offer', l.offerType);
     const tk = l.followUpTrack || 'followup';
     const stage = l.followUpStage || 1;
     return tplKey(tk, stage);
@@ -908,8 +931,8 @@
     });
     document.getElementById('dl-email-copy').addEventListener('click', async () => {
       try {
-        await navigator.clipboard.writeText(`Subject: ${subject}\n\n${body}`);
-        toast('Copied to clipboard');
+        await navigator.clipboard.writeText(body); // body only — subject stays out of the paste
+        toast('Copied email body');
       } catch (e) { toast('Copy failed — select the text manually'); }
     });
     document.getElementById('dl-email-open').addEventListener('click', () => {
@@ -1126,19 +1149,20 @@
     const pipe = leads.filter(l => (l.recordType || 'pipeline') !== 'reference');
     const total = pipe.length;
     const untouched = pipe.filter(l => l.status === 'New / Untouched').length;
-    const underwriting = pipe.filter(l => l.status === 'For Underwriting').length;
     const escalated = pipe.filter(l => l.status === 'Escalated – Awaiting Supervisor Review').length;
     const qualified = pipe.filter(l => l.status === 'Qualified').length;
     const today = new Date().toISOString().slice(0,10);
     const followupToday = pipe.filter(l => l.followUpDate && l.followUpDate <= today).length;
+    const pastDue = pipe.filter(l => l.followUpDate && l.followUpDate < today).length; // #3: overdue = date strictly before today
 
+    // #9: "In Underwriting" tile removed alongside the retired status.
     statsEl.innerHTML = `
       <div class="dl-stat"><div class="num">${total}</div><div class="lbl">Total Leads</div></div>
       <div class="dl-stat"><div class="num">${untouched}</div><div class="lbl">New / Untouched</div></div>
-      <div class="dl-stat"><div class="num">${underwriting}</div><div class="lbl">In Underwriting</div></div>
       <div class="dl-stat warn"><div class="num">${escalated}</div><div class="lbl">Awaiting Supervisor</div></div>
       <div class="dl-stat"><div class="num">${qualified}</div><div class="lbl">Qualified</div></div>
       <div class="dl-stat"><div class="num">${followupToday}</div><div class="lbl">Follow-Ups Today</div></div>
+      <div class="dl-stat${pastDue ? ' warn' : ''}"><div class="num">${pastDue}</div><div class="lbl">Past Due Follow-Up</div></div>
     `;
   }
 
@@ -1233,9 +1257,9 @@
     if (!l) return;
     const flags = flagCount(l);
 
-    const ddHtml = l.isNewDev ? `
+    const ddHtml = flags > 0 ? `
       <div class="dl-dd-section">
-        <div class="dd-title"><span>Due Diligence — Red Flags</span><span class="dd-count">${flags} flagged</span></div>
+        <div class="dd-title"><span>Due Diligence — Red Flags <span style="font-weight:400; opacity:0.6;">(legacy)</span></span><span class="dd-count">${flags} flagged</span></div>
         <div class="dd-list">
           ${DD_ITEMS.map(item => `
             <div class="dd-item ${l.dd && l.dd[item.key] ? 'flagged' : ''}">
@@ -1371,12 +1395,12 @@
           <div class="dl-row2">
             <div class="dl-field"><label>Source</label>
               <select id="f-source">
-                ${SOURCES.map(s => `<option value="${s.value}" ${l.source===s.value?'selected':''}>${s.value}</option>`).join('')}
+                ${optionsPreserving(ACTIVE_SOURCES, l.source)}
               </select>
             </div>
             <div class="dl-field"><label>Status</label>
               <select id="f-status">
-                ${STATUSES.map(s => `<option value="${s}" ${l.status===s?'selected':''}>${s}</option>`).join('')}
+                ${optionsPreserving(ACTIVE_STATUSES, l.status)}
               </select>
             </div>
           </div>
@@ -1413,7 +1437,6 @@
               ${DEAL_REASONS.map(r => `<div class="dl-checkrow"><input type="checkbox" id="dr-${r.key}" data-dreason="${r.key}" ${l.dealReasons && l.dealReasons[r.key] ? 'checked' : ''} /><label for="dr-${r.key}">${escapeHtml(r.label)}</label></div>`).join('')}
             </div>
           </div>
-          <div id="f-dd-wrap"></div>
           <div class="dl-row2">
             <div class="dl-field"><label>Contact name</label><input type="text" id="f-contact-name" value="${escapeHtml(l.contactName)}" /></div>
             <div class="dl-field"><label>Contact email</label><input type="email" id="f-contact-email" value="${escapeHtml(l.contactEmail)}" /></div>
@@ -1448,31 +1471,9 @@
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
     document.getElementById('dl-cancel-btn').addEventListener('click', closeOverlay);
 
-    const ddWrap = document.getElementById('f-dd-wrap');
-    function renderDdChecklist() {
-      const showDd = document.getElementById('f-dev').checked;
-      if (!showDd) { ddWrap.innerHTML = ''; return; }
-      const flaggedNow = DD_ITEMS.reduce((n, item) => n + (l.dd && l.dd[item.key] ? 1 : 0), 0);
-      ddWrap.innerHTML = `
-        <div class="dl-dd-section">
-          <div class="dd-title"><span>Due Diligence — Red Flags</span><span class="dd-count" id="dd-live-count">${flaggedNow} flagged</span></div>
-          ${DD_ITEMS.map(item => `
-            <div class="dl-checkrow">
-              <input type="checkbox" id="dd-${item.key}" data-key="${item.key}" ${l.dd && l.dd[item.key] ? 'checked' : ''} />
-              <label for="dd-${item.key}">${escapeHtml(item.label)}</label>
-            </div>
-          `).join('')}
-        </div>
-      `;
-      ddWrap.querySelectorAll('input[type=checkbox]').forEach(cb => {
-        cb.addEventListener('change', () => {
-          const count = Array.from(ddWrap.querySelectorAll('input[type=checkbox]')).filter(c => c.checked).length;
-          document.getElementById('dd-live-count').textContent = count + ' flagged';
-        });
-      });
-    }
-    document.getElementById('f-dev').addEventListener('change', renderDdChecklist);
-    renderDdChecklist();
+    // #8: the separate "Due Diligence — Red Flags" form checklist was removed; its
+    // net-new items now live in the Area-read grid above. Legacy l.dd data is
+    // preserved untouched (see save handler) and still shown read-only in the detail view.
 
     // Area-read verdict buttons (single-select toggle)
     let selectedVerdict = l.areaVerdict || '';
@@ -1503,14 +1504,27 @@
       document.getElementById('f-followup').value = computeNextDate(fuTrackEl.value, Number(fuStageEl.value));
     });
 
+    // Status-driven follow-up date automation (Pat requests #4 & #5).
+    // Offer Sent -> set next follow-up to tomorrow; terminal statuses -> clear it.
+    // Writes into the editable date field, so it stays hand-overridable and the
+    // existing save handler picks it up with no change to the save path.
+    const fStatusEl = document.getElementById('f-status');
+    const FU_CLEAR_STATUSES = ['Dead', 'Qualified', 'Off-Market', 'Pass'];
+    if (fStatusEl) {
+      fStatusEl.addEventListener('change', () => {
+        const fuInput = document.getElementById('f-followup');
+        if (fStatusEl.value === 'Offer Sent') {
+          const d = new Date(); d.setDate(d.getDate() + 1); // next day
+          fuInput.value = d.toISOString().slice(0, 10);
+        } else if (FU_CLEAR_STATUSES.includes(fStatusEl.value)) {
+          fuInput.value = '';
+        }
+      });
+    }
+
     document.getElementById('dl-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const sourceVal = document.getElementById('f-source').value;
-      const dd = {};
-      DD_ITEMS.forEach(item => {
-        const cb = document.getElementById('dd-' + item.key);
-        dd[item.key] = cb ? cb.checked : false;
-      });
       const areaReasons = {};
       AREA_REASONS.forEach(r => {
         const cb = document.getElementById('ar-' + r.key);
@@ -1545,7 +1559,7 @@
         offerSentDate: document.getElementById('f-status').value === 'Offer Sent'
           ? (l.offerSentDate || new Date().toISOString().slice(0,10))
           : (l.offerSentDate || ''),
-        dd: dd,
+        dd: l.dd || {}, // #8: preserve legacy due-diligence flags; form no longer edits them
         areaVerdict: selectedVerdict,
         areaReasons: areaReasons,
         dealOutcome: document.getElementById('f-deal-outcome').value,
@@ -1735,6 +1749,7 @@
   function openMapModal() {
     let mapColorMode = 'status';
     let mapHeatOn = false;
+    let mapQuery = ''; // #2: current address-search text
 
     const mapped = leads.filter(l => typeof l.lat === 'number' && typeof l.lng === 'number' && !isNaN(l.lat) && !isNaN(l.lng));
     const unmapped = leads.length - mapped.length;
@@ -1749,6 +1764,7 @@
             <div class="subid">${mapped.length} plotted${unmapped ? ` · ${unmapped} not yet geocoded` : ''}</div>
           </div>
           <div class="dl-map-controls">
+            <input type="text" id="dl-map-search" placeholder="🔍 Search address…" class="dl-select" style="cursor:text; min-width:190px;" autocomplete="off" />
             <div class="dl-map-seg" id="dl-map-colormode">
               <button type="button" data-mode="status" class="active">Color: Status</button>
               <button type="button" data-mode="verdict">Color: Area read</button>
@@ -1804,10 +1820,15 @@
       </div>`;
     }
 
+    // #2: which plotted leads are currently shown (all, or those matching the search).
+    function visibleMapped() {
+      const q = mapQuery.trim().toLowerCase();
+      return q ? mapped.filter(l => (l.address || '').toLowerCase().includes(q)) : mapped;
+    }
     function buildMarkers() {
       markers.forEach(m => m.setMap(null));
       markers = [];
-      mapped.forEach(l => {
+      visibleMapped().forEach(l => {
         const marker = new google.maps.Marker({
           position: { lat: l.lat, lng: l.lng }, map, title: l.address || '',
           icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: pinColor(l), fillOpacity: 0.95, strokeColor: '#1C2B39', strokeWeight: 1 },
@@ -1831,7 +1852,7 @@
       // explicit "avoid" call on the area. Records that carry notes but no area
       // verdict -- deal-specific passes -- stay off the heatmap entirely, so a
       // narrow lot or a bad price never paints a street red.
-      const pts = mapped
+      const pts = visibleMapped()
         .filter(l => l.areaVerdict === 'avoid')
         .map(l => ({
           location: new google.maps.LatLng(l.lat, l.lng),
@@ -1847,7 +1868,7 @@
         el.innerHTML = AREA_VERDICTS.map(v => `<span class="lg"><span class="dot" style="background:${v.color};"></span>${v.label}</span>`).join('')
           + `<span class="lg"><span class="dot" style="background:#B6AA90;"></span>No read</span>`;
       } else {
-        const present = [...new Set(mapped.map(l => l.status))];
+        const present = [...new Set(visibleMapped().map(l => l.status))];
         el.innerHTML = present.map(s => `<span class="lg"><span class="dot" style="background:${STATUS_COLOR[s] || '#6B6459'};"></span>${escapeHtml(s)}</span>`).join('');
       }
       if (mapHeatOn) el.innerHTML += `<span class="lg"><span class="dot" style="background:linear-gradient(90deg,#3F6B4F,#B8863B,#8B4A3D);"></span>Heatmap = caution density</span>`;
@@ -1869,6 +1890,24 @@
       document.getElementById('dl-map-heat').textContent = mapHeatOn ? '🔥 Heatmap: On' : '🔥 Heatmap: Off';
       buildHeat(); renderLegend();
     });
+
+    // #2: raw address search — filters the pins as you type and pans/zooms to fit matches.
+    const mapSearchEl = document.getElementById('dl-map-search');
+    if (mapSearchEl) {
+      mapSearchEl.addEventListener('input', () => {
+        mapQuery = mapSearchEl.value;
+        buildMarkers(); buildHeat(); renderLegend();
+        if (mapQuery.trim()) {
+          const vis = visibleMapped();
+          if (vis.length) {
+            const b = new google.maps.LatLngBounds();
+            vis.forEach(l => b.extend({ lat: l.lat, lng: l.lng }));
+            map.fitBounds(b);
+            if (vis.length === 1) map.setZoom(Math.min(map.getZoom() || 14, 15));
+          }
+        }
+      });
+    }
   }
 
   function openDashboardModal() {
