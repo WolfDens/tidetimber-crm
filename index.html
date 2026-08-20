@@ -303,6 +303,19 @@
   }
   .dl-dup-warn.dup-exact { border-color: #8B4A3D; background: rgba(139,74,61,0.12); }
   .dl-dup-warn .dw-title { font-weight: 600; margin-bottom: 3px; }
+
+  /* Duplicate report modal */
+  .dl-dupe-modal { max-width: 900px; }
+  .dl-dupe-pair { border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; }
+  .dl-dupe-pair .pair-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .dl-dupe-pair .pair-kind { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--brass-dark); }
+  .dl-dupe-rec { font-size: 12.5px; padding: 7px 9px; border-radius: 5px; background: var(--off-bg); margin-bottom: 6px; }
+  .dl-dupe-rec.is-keeper { background: rgba(63,107,79,0.10); border: 1px solid #3F6B4F; }
+  .dl-dupe-rec .rec-addr { font-weight: 600; }
+  .dl-dupe-rec .rec-meta { color: var(--ink-soft); font-size: 11.5px; margin-top: 2px; }
+  .dl-dupe-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+  .dl-dupe-note { font-size: 11.5px; color: var(--ink-soft); margin-top: 6px; }
+  .tag-retired { background: #8B4A3D; color: #fff; }
   .dl-dup-warn ul { margin: 3px 0 0 16px; padding: 0; }
   .dl-dup-warn li { margin: 1px 0; }
   .dl-btn-brass { background: var(--brass); color: #fff; }
@@ -440,6 +453,7 @@
       <button class="dl-select" id="dl-dashboard-btn" style="cursor:pointer;">📊 Dashboard</button>
       <button class="dl-select" id="dl-map-btn" style="cursor:pointer;">🗺 Map</button>
       <button class="dl-select" id="dl-geocode-btn" style="cursor:pointer;">📍 Geocode missing</button>
+      <button class="dl-select" id="dl-dupes-btn" style="cursor:pointer;">⚠ Duplicates</button>
       <button class="dl-new-btn" id="dl-new-btn">+ New Lead</button>
     </div>
 
@@ -1211,6 +1225,11 @@
         dealOutcome: '', dealReasons: {}, areaVerdict: '', areaReasons: {},
         ...l
       };
+      // Normalized address key. Computed on load so every record has one even if
+      // it was written by an import that never set it; persisted on any save and
+      // by the "Save keys" action in the Duplicates report. An import can query
+      // this field to check for an existing record BEFORE inserting.
+      if (x.address) x.addrKey = addrKey(x.address);
       // Imported historical records arrive without pipeline fields -- fill them
       // in so they sort, filter and display like everything else.
       if (!x.status) {
@@ -1319,6 +1338,7 @@
         <div class="addr">${escapeHtml(l.address || 'Untitled lead')}${copyAddrBtn(l.address)}</div>
         <div class="dl-tags">
           <span class="dl-tag tag-source">${escapeHtml(l.source)}</span>
+          ${l.retiredAsDuplicateOf ? `<span class="dl-tag tag-retired">Retired duplicate &rarr; ${escapeHtml(l.retiredAsDuplicateOf)}</span>` : ''}
           ${l.recordType === 'reference' ? '<span class="dl-tag tag-source" style="opacity:.7;">Reference</span>' : ''}
           ${l.isNewDev ? '<span class="dl-tag tag-dev">New Development</span>' : ''}
           ${l.isFixFlip ? '<span class="dl-tag tag-flip">Fix &amp; Flip</span>' : ''}
@@ -1431,7 +1451,8 @@
     const num = addrHouseNum(address);
     leads.forEach(l => {
       if (!l.address || (excludeId && l.id === excludeId)) return;
-      const lk = addrKey(l.address);
+      if (l.retiredAsDuplicateOf) return; // already merged away -- not a live duplicate
+      const lk = l.addrKey || addrKey(l.address);
       if (!lk) return;
       if (lk === key) { out.exact.push(l); return; }
       const score = addrOverlap(address, l.address);
@@ -1820,6 +1841,8 @@
         offerSentDate: document.getElementById('f-status').value === 'Offer Sent'
           ? (l.offerSentDate || new Date().toISOString().slice(0,10))
           : (l.offerSentDate || ''),
+        addrKey: addrKey(document.getElementById('f-address').value.trim()),
+        retiredAsDuplicateOf: l.retiredAsDuplicateOf || '',
         dd: l.dd || {}, // #8: preserve legacy due-diligence flags; form no longer edits them
         areaVerdict: selectedVerdict,
         areaReasons: areaReasons,
@@ -1865,6 +1888,7 @@
   document.getElementById('dl-dashboard-btn').addEventListener('click', openDashboardModal);
   document.getElementById('dl-map-btn').addEventListener('click', openMapModal);
   document.getElementById('dl-geocode-btn').addEventListener('click', backfillGeocodes);
+  document.getElementById('dl-dupes-btn').addEventListener('click', openDupesModal);
 
   // Repeatable backfill: fills lat/lng for any lead that has an address but no
   // coordinates. Runs in the page so it uses the referrer-locked Maps key.
@@ -2375,6 +2399,213 @@
     kml += '</Document></kml>\n';
     downloadFile(mapExportName('kml'), 'application/vnd.google-earth.kml+xml', kml);
     toast('Exported ' + list.length + ' pin(s)' + (unmappedCount ? ' \u2014 ' + unmappedCount + ' lead(s) still need geocoding' : ''));
+  }
+
+  // =====================================================================
+  //  DUPLICATE REPORT + MERGE
+  //  The in-form warning stops a human from typing a duplicate. This is the
+  //  other half: it finds duplicates that are ALREADY in the ledger (all of
+  //  the existing ones came from the July bulk import, which wrote without a
+  //  duplicate check) and merges a pair in one click.
+  //
+  //  Merge policy -- deliberate, because the two halves of every real pair
+  //  hold DIFFERENT things:
+  //    * KEEPER  = the record with the fuller address. It carries the live
+  //      pipeline state (status, follow-up track/stage/date, contact).
+  //    * TWIN    = usually the imported record. It carries the underwriting
+  //      history (Adam/Pat notes, area read, decided-by, deal outcome).
+  //  So the merge pulls the twin's history INTO the keeper, fills any blank
+  //  keeper field from the twin, ORs the checkbox sets, and never overwrites
+  //  a value the keeper already has. Status and follow-up scheduling always
+  //  stay the keeper's.
+  //
+  //  Nothing is deleted. The twin is marked retired and dropped out of the
+  //  follow-up queues, so it can never be worked again -- deleting the row
+  //  stays a human decision.
+  // =====================================================================
+  const MERGE_FILL_IF_BLANK = ['contactName','contactEmail','arv','rehab','offer','offerSentDate',
+    'dealOutcome','areaVerdict','decidedBy','decidedOn','participants','recordType'];
+
+  function mergeLeadPair(keeper, twin) {
+    const today = new Date().toISOString().slice(0, 10);
+
+    MERGE_FILL_IF_BLANK.forEach(f => {
+      const kv = keeper[f];
+      if ((kv === '' || kv === null || kv === undefined) && twin[f]) keeper[f] = twin[f];
+    });
+    // A specific offer type beats the default.
+    if ((!keeper.offerType || keeper.offerType === 'WS Basic') && twin.offerType && twin.offerType !== 'WS Basic') {
+      keeper.offerType = twin.offerType;
+    }
+    keeper.isNewDev = !!(keeper.isNewDev || twin.isNewDev);
+    keeper.isFixFlip = !!(keeper.isFixFlip || twin.isFixFlip);
+    keeper.areaReasons = keeper.areaReasons || {};
+    keeper.dealReasons = keeper.dealReasons || {};
+    AREA_REASONS.forEach(r => { if (twin.areaReasons && twin.areaReasons[r.key]) keeper.areaReasons[r.key] = true; });
+    DEAL_REASONS.forEach(r => { if (twin.dealReasons && twin.dealReasons[r.key]) keeper.dealReasons[r.key] = true; });
+    if (keeper.lat == null && twin.lat != null) { keeper.lat = twin.lat; keeper.lng = twin.lng; }
+    if (twin.dd && Object.keys(twin.dd).length) keeper.dd = Object.assign({}, twin.dd, keeper.dd || {});
+
+    const twinNotes = (twin.notes || '').trim();
+    if (twinNotes) {
+      keeper.notes = (keeper.notes ? keeper.notes.trim() + '\n\n' : '')
+        + '--- merged from ' + (twin.dealId || twin.id) + ' (' + (twin.address || '') + ') on ' + today + ' ---\n'
+        + twinNotes;
+    }
+    if (twin.status && twin.status !== keeper.status) {
+      keeper.notes = (keeper.notes ? keeper.notes.trim() + '\n' : '')
+        + '[merge note] retired twin was marked "' + twin.status + '".';
+    }
+    keeper.addrKey = addrKey(keeper.address);
+    keeper.lastUpdated = today;
+
+    twin.retiredAsDuplicateOf = keeper.dealId || keeper.id;
+    twin.followUpDate = '';            // drops it out of Today's Follow-Ups and Past Due
+    twin.addrKey = addrKey(twin.address);
+    twin.lastUpdated = today;
+    twin.notes = 'RETIRED DUPLICATE -- merged into ' + (keeper.dealId || keeper.id) + ' on ' + today
+      + '. Safe to delete.\n' + (twin.notes || '');
+    return { keeper, twin };
+  }
+
+  // Clusters across the whole ledger. kind: 'exact' | 'near'.
+  function findDuplicatePairs() {
+    const live = leads.filter(l => l.address && !l.retiredAsDuplicateOf);
+    const pairs = [];
+    for (let i = 0; i < live.length; i++) {
+      for (let j = i + 1; j < live.length; j++) {
+        const a = live[i], b = live[j];
+        const ka = a.addrKey || addrKey(a.address), kb = b.addrKey || addrKey(b.address);
+        if (!ka || !kb) continue;
+        if (ka === kb) { pairs.push({ kind: 'exact', a, b, score: 1 }); continue; }
+        const score = addrOverlap(a.address, b.address);
+        const sameNum = addrHouseNum(a.address) && addrHouseNum(a.address) === addrHouseNum(b.address);
+        const contains = ka.length > 5 && kb.length > 5 && (ka.indexOf(kb) === 0 || kb.indexOf(ka) === 0);
+        // A near pair must be the SAME house number -- 7413 and 7419 on one
+        // street are two different properties, not a duplicate.
+        if (sameNum && (contains || score >= 0.5)) pairs.push({ kind: 'near', a, b, score });
+      }
+    }
+    return pairs.sort((x, y) => (x.kind === y.kind ? y.score - x.score : (x.kind === 'exact' ? -1 : 1)));
+  }
+
+  function recCardHtml(l, isKeeper) {
+    const notes = (l.notes || '').replace(/\s+/g, ' ').slice(0, 140);
+    return `<div class="dl-dupe-rec ${isKeeper ? 'is-keeper' : ''}">
+      <div class="rec-addr">${escapeHtml(l.address || '')}${isKeeper ? ' &nbsp;<span class="pair-kind">keeper</span>' : ''}</div>
+      <div class="rec-meta">${escapeHtml(l.dealId || l.id)} &middot; ${escapeHtml(l.status || '')}
+        ${l.followUpDate ? '&middot; follow-up ' + fmtDate(l.followUpDate) : '&middot; no follow-up date'}
+        ${l.contactName ? '&middot; ' + escapeHtml(l.contactName) : ''}
+        ${l.decidedBy ? '&middot; decided by ' + escapeHtml(l.decidedBy) : ''}
+        ${l.dateAdded ? '&middot; added ' + fmtDate(l.dateAdded) : ''}</div>
+      ${notes ? `<div class="rec-meta">&ldquo;${escapeHtml(notes)}${(l.notes || '').length > 140 ? '\u2026' : ''}&rdquo;</div>` : ''}
+    </div>`;
+  }
+
+  function openDupesModal() {
+    const pairs = findDuplicatePairs();
+    const missingKeys = leads.filter(l => l.address && !l.addrKey).length;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'dl-overlay';
+    overlay.innerHTML = `
+      <div class="dl-modal dl-dupe-modal">
+        <h2>Duplicate records</h2>
+        <div class="subid">${pairs.length} pair(s) found across ${leads.filter(l => l.address).length} leads
+          &middot; exact = same address after normalizing &middot; near = same house number and street</div>
+        <div class="dl-detail-body" id="dl-dupe-body">
+          ${pairs.length ? pairs.map((pr, i) => {
+            // Keeper defaults to the fuller address; that record holds the live
+            // pipeline state in every case we have seen.
+            const keeperFirst = (pr.a.address || '').length >= (pr.b.address || '').length;
+            const keeper = keeperFirst ? pr.a : pr.b;
+            const twin = keeperFirst ? pr.b : pr.a;
+            return `<div class="dl-dupe-pair" data-pair="${i}">
+              <div class="pair-head">
+                <span class="pair-kind">${pr.kind === 'exact' ? 'Exact match' : 'Near match \u00b7 ' + Math.round(pr.score * 100) + '%'}</span>
+                <span class="pair-kind">${escapeHtml(keeper.dealId || '')} &larr; ${escapeHtml(twin.dealId || '')}</span>
+              </div>
+              ${recCardHtml(keeper, true)}
+              ${recCardHtml(twin, false)}
+              <div class="dl-dupe-actions">
+                <button class="dl-btn dl-btn-primary dl-btn-sm" data-merge="${i}" data-keeper="${keeper.id}" data-twin="${twin.id}">Merge into keeper</button>
+                <button class="dl-btn dl-btn-ghost dl-btn-sm" data-swap="${i}">Swap keeper</button>
+                <button class="dl-btn dl-btn-ghost dl-btn-sm" data-open="${keeper.id}">Open keeper</button>
+                <button class="dl-btn dl-btn-ghost dl-btn-sm" data-open="${twin.id}">Open twin</button>
+              </div>
+              <div class="dl-dupe-note">Merge pulls the twin's notes, area read, decision and any blank field into the keeper. The keeper's status and follow-up schedule are untouched. The twin is marked retired and drops out of the follow-up queues \u2014 it is never deleted.</div>
+            </div>`;
+          }).join('') : '<div class="dl-dash-empty">No duplicates found. Nice.</div>'}
+        </div>
+        <div class="dl-modal-actions">
+          <button class="dl-btn dl-btn-ghost" id="dl-dupe-close">Close</button>
+          ${missingKeys ? `<button class="dl-btn dl-btn-ghost" id="dl-dupe-keys">Save address keys (${missingKeys})</button>` : ''}
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
+    document.getElementById('dl-dupe-close').addEventListener('click', closeOverlay);
+
+    // Swap which record is treated as the keeper, then re-render the report.
+    overlay.querySelectorAll('[data-swap]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const box = btn.closest('.dl-dupe-pair');
+        const mergeBtn = box.querySelector('[data-merge]');
+        const k = mergeBtn.dataset.keeper, t = mergeBtn.dataset.twin;
+        mergeBtn.dataset.keeper = t; mergeBtn.dataset.twin = k;
+        const recs = box.querySelectorAll('.dl-dupe-rec');
+        recs[0].classList.toggle('is-keeper');
+        recs[1].classList.toggle('is-keeper');
+        toast('Keeper swapped \u2014 keeping ' + ((leads.find(l => l.id === t) || {}).dealId || ''));
+      });
+    });
+
+    overlay.querySelectorAll('[data-open]').forEach(btn => {
+      btn.addEventListener('click', () => { closeOverlay(); openDetail(btn.dataset.open); });
+    });
+
+    overlay.querySelectorAll('[data-merge]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const keeper = leads.find(l => l.id === btn.dataset.keeper);
+        const twin = leads.find(l => l.id === btn.dataset.twin);
+        if (!keeper || !twin) { toast('Record not found \u2014 reopen the report'); return; }
+        if (!confirm('Merge ' + (twin.dealId || '') + ' into ' + (keeper.dealId || '') + '?\n\n'
+          + 'The twin keeps existing but is marked retired and loses its follow-up date. Nothing is deleted.')) return;
+        btn.disabled = true;
+        btn.textContent = 'Merging\u2026';
+        mergeLeadPair(keeper, twin);
+        const okA = await upsertLead(keeper);
+        const okB = await upsertLead(twin);
+        render();
+        if (okA && okB) {
+          const box = btn.closest('.dl-dupe-pair');
+          box.style.opacity = '0.5';
+          btn.textContent = 'Merged \u2713';
+          toast('Merged into ' + (keeper.dealId || ''));
+        } else {
+          btn.disabled = false;
+          btn.textContent = 'Merge into keeper';
+          toast('Sync failed \u2014 check your connection and try again');
+        }
+      });
+    });
+
+    const keysBtn = document.getElementById('dl-dupe-keys');
+    if (keysBtn) {
+      keysBtn.addEventListener('click', async () => {
+        const todo = leads.filter(l => l.address && !l.addrKey);
+        keysBtn.disabled = true;
+        let done = 0;
+        for (const l of todo) {
+          l.addrKey = addrKey(l.address);
+          if (await upsertLead(l)) done++;
+        }
+        keysBtn.disabled = false;
+        keysBtn.textContent = 'Saved ' + done;
+        toast('Address keys written for ' + done + ' record(s)');
+      });
+    }
   }
 
   function exportLeadsCSV() {
