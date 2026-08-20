@@ -285,6 +285,26 @@
     cursor: pointer; max-width: 150px;
   }
   .dl-btn-sm { font-size: 11.5px; padding: 7px 11px; }
+
+  /* Copy-address button (Pat request): small inline chip next to any address. */
+  .dl-copy-addr {
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-left: 6px; padding: 1px 6px; border-radius: 5px; cursor: pointer;
+    font-size: 11px; line-height: 1.5; vertical-align: middle;
+    background: transparent; color: var(--ink-soft);
+    border: 1px solid var(--line-strong);
+  }
+  .dl-copy-addr:hover { color: var(--ink); border-color: var(--ink); }
+
+  /* Duplicate-address warning under the address field (Pat request). */
+  .dl-dup-warn {
+    margin-top: 6px; padding: 8px 10px; border-radius: 6px; font-size: 12px;
+    color: var(--ink); border: 1px solid #B8863B; background: rgba(184,134,59,0.10);
+  }
+  .dl-dup-warn.dup-exact { border-color: #8B4A3D; background: rgba(139,74,61,0.12); }
+  .dl-dup-warn .dw-title { font-weight: 600; margin-bottom: 3px; }
+  .dl-dup-warn ul { margin: 3px 0 0 16px; padding: 0; }
+  .dl-dup-warn li { margin: 1px 0; }
   .dl-btn-brass { background: var(--brass); color: #fff; }
   .dl-btn-brass:hover { background: var(--brass-dark); }
 
@@ -561,6 +581,56 @@
     const vals = activeValues.slice();
     if (current && !vals.includes(current)) vals.unshift(current);
     return vals.map(v => `<option value="${escapeHtml(v)}" ${current === v ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('');
+  }
+
+  // ============================================================
+  //  STATUS RULES -- the single source of truth for "status implies X".
+  //  Every rule Pat has asked for lives here and nowhere else. Add the next
+  //  one to this table, not to a UI handler.
+  //
+  //    Rejected   -> follow-up TRACK = Rejected  (date left where it was)
+  //    Ghosted    -> follow-up TRACK = Ghosted   (date left where it was)
+  //    Offer Sent -> follow-up DATE  = tomorrow
+  //    Escalated  -> follow-up DATE  = tomorrow
+  //    Dead / Qualified / Off-Market / Pass -> follow-up DATE cleared
+  //
+  //  statusRuleChanges() returns ONLY the fields that should change, so the
+  //  same logic drives the edit form (live, as you pick a status) and the save
+  //  path (so a status set by an import or a future bulk edit gets the same
+  //  treatment -- the old version only fired on a human using the form).
+  // ============================================================
+  const FU_CLEAR_STATUSES = ['Dead', 'Qualified', 'Off-Market', 'Pass'];
+  const STATUS_ESCALATED = 'Escalated \u2013 Awaiting Supervisor Review';
+  const STATUS_TO_TRACK = { 'Rejected': 'rejected', 'Ghosted': 'ghosted' };
+
+  function tomorrowIso() {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function statusRuleChanges(status, current) {
+    const out = {};
+    const cur = current || {};
+    const wantTrack = STATUS_TO_TRACK[status];
+    if (wantTrack && (cur.followUpTrack || 'followup') !== wantTrack) {
+      out.followUpTrack = wantTrack;
+      out.followUpStage = 1;
+    }
+    if (status === 'Offer Sent' || status === STATUS_ESCALATED) {
+      out.followUpDate = tomorrowIso();
+    } else if (FU_CLEAR_STATUSES.includes(status)) {
+      out.followUpDate = '';
+    }
+    return out;
+  }
+
+  // Applies the rules to a lead in place. prevStatus guards hand-edits: if the
+  // status did not change on this save, whatever the user typed into the date
+  // field wins (Pat #4 explicitly wanted the auto-date to stay overridable).
+  function applyStatusRules(lead, prevStatus) {
+    if (prevStatus !== undefined && prevStatus === lead.status) return lead;
+    return Object.assign(lead, statusRuleChanges(lead.status, lead));
   }
 
   const STATUS_STAMP = {
@@ -914,7 +984,8 @@
           <button class="dl-btn dl-btn-ghost" id="dl-email-close">Close</button>
           <div style="display:flex; gap:8px;">
             <button class="dl-btn dl-btn-ghost" id="dl-email-copy">Copy text</button>
-            <button class="dl-btn dl-btn-primary" id="dl-email-open">Open in Mail</button>
+            <button class="dl-btn dl-btn-ghost" id="dl-email-open">Mail app</button>
+            <button class="dl-btn dl-btn-primary" id="dl-email-gmail">Open in Gmail</button>
           </div>
         </div>
       </div>
@@ -934,6 +1005,18 @@
         await navigator.clipboard.writeText(body); // body only — subject stays out of the paste
         toast('Copied email body');
       } catch (e) { toast('Copy failed — select the text manually'); }
+    });
+    // Gmail web compose (Pat request). Opens a Gmail draft in a new tab with the
+    // recipient, subject and body prefilled. Uses the browser's signed-in default
+    // Google account; the old mailto route is kept as the "Mail app" button.
+    document.getElementById('dl-email-gmail').addEventListener('click', () => {
+      const to = (l.contactEmail || '').trim();
+      const url = 'https://mail.google.com/mail/?view=cm&fs=1&tf=1'
+        + (to ? '&to=' + encodeURIComponent(to) : '')
+        + '&su=' + encodeURIComponent(subject)
+        + '&body=' + encodeURIComponent(body);
+      window.open(url, '_blank', 'noopener');
+      if (!to) toast('No email on file \u2014 Gmail opened with the message ready');
     });
     document.getElementById('dl-email-open').addEventListener('click', () => {
       const mailto = `mailto:${encodeURIComponent(l.contactEmail || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -1233,7 +1316,7 @@
           <span class="dl-dealid">${escapeHtml(l.dealId)}</span>
           <span class="dl-stamp ${STATUS_STAMP[l.status] || 'stamp-off'}">${escapeHtml(l.status)}</span>
         </div>
-        <div class="addr">${escapeHtml(l.address || 'Untitled lead')}</div>
+        <div class="addr">${escapeHtml(l.address || 'Untitled lead')}${copyAddrBtn(l.address)}</div>
         <div class="dl-tags">
           <span class="dl-tag tag-source">${escapeHtml(l.source)}</span>
           ${l.recordType === 'reference' ? '<span class="dl-tag tag-source" style="opacity:.7;">Reference</span>' : ''}
@@ -1247,9 +1330,127 @@
     `;
   }
 
+  // Close only the TOPMOST overlay. Was: querySelector('.dl-overlay'), which grabs
+  // the FIRST overlay in the DOM -- so closing Prep Email (opened on top of the
+  // detail modal) removed the modal underneath and left the email box on screen,
+  // requiring a second Close. Now stacked modals unwind one at a time.
   function closeOverlay() {
-    const ov = document.querySelector('.dl-overlay');
-    if (ov) ov.remove();
+    const all = document.querySelectorAll('.dl-overlay');
+    if (all.length) all[all.length - 1].remove();
+  }
+
+  // --- Clipboard helper ---------------------------------------------------
+  async function copyText(text, okMsg) {
+    if (!text) { toast('Nothing to copy'); return; }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(okMsg || 'Copied');
+      return;
+    } catch (e) { /* clipboard API can be blocked -- fall through */ }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      toast(okMsg || 'Copied');
+    } catch (e2) { toast('Copy failed -- select the text manually'); }
+  }
+
+  // Copy-address chip. Rendered anywhere an address is shown; one delegated
+  // listener below handles every instance (cards, detail modal, map popups).
+  function copyAddrBtn(addr) {
+    if (!addr) return '';
+    return `<button type="button" class="dl-copy-addr" data-copy-addr="${escapeHtml(addr)}" title="Copy address">\u29c9 Copy</button>`;
+  }
+  // Capture phase + stopPropagation so clicking Copy on a pipeline card does not
+  // also open that card's detail modal.
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('[data-copy-addr]');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    copyText(btn.getAttribute('data-copy-addr'), 'Address copied');
+  }, true);
+
+  // --- Duplicate / near-duplicate address detection (Pat request) ----------
+  // Pure front-end, no schema change: normalize both addresses to a comparable
+  // form, then flag exact repeats hard and look-alikes softly.
+  const ADDR_ABBR = {
+    street:'st', str:'st', st:'st', road:'rd', rd:'rd', drive:'dr', dr:'dr', drv:'dr',
+    lane:'ln', ln:'ln', avenue:'ave', ave:'ave', av:'ave', court:'ct', ct:'ct',
+    boulevard:'blvd', blvd:'blvd', blv:'blvd', circle:'cir', cir:'cir', place:'pl', pl:'pl',
+    terrace:'ter', ter:'ter', trail:'trl', trl:'trl', parkway:'pkwy', pkwy:'pkwy',
+    highway:'hwy', hwy:'hwy', route:'rte', rte:'rte', rt:'rte', crossing:'xing', xing:'xing',
+    north:'n', south:'s', east:'e', west:'w',
+    northeast:'ne', northwest:'nw', southeast:'se', southwest:'sw',
+    apartment:'apt', apt:'apt', unit:'unit', suite:'ste', ste:'ste', lot:'lot',
+  };
+  const ADDR_NOISE = ['nc','sc','usa','us','north','carolina','south'];
+  function normAddress(v) {
+    return String(v || '')
+      .toLowerCase()
+      .replace(/[.,#]/g, ' ')
+      .replace(/[^a-z0-9\s-]/g, ' ')
+      .split(/\s+/).filter(Boolean)
+      .map(w => ADDR_ABBR[w] || w)
+      .join(' ')
+      .trim();
+  }
+  function addrKey(v) { return normAddress(v).replace(/[\s-]+/g, ''); }
+  function addrHouseNum(v) { const m = normAddress(v).match(/^(\d+)/); return m ? m[1] : ''; }
+  function addrTokens(v) { return normAddress(v).split(' ').filter(w => w && !ADDR_NOISE.includes(w)); }
+  // Street-type words and directionals carry little identifying weight on their
+  // own -- "Rd" matching "Rd" is not a signal, "Sardis" matching "Sardis" is.
+  const ADDR_SUFFIX = new Set(['st','rd','dr','ln','ave','ct','blvd','cir','pl','ter','trl',
+    'pkwy','hwy','rte','xing','way','loop','apt','unit','ste','lot','n','s','e','w','ne','nw','se','sw']);
+  function addrNameTokens(v) {
+    return addrTokens(v).filter(t => !/^\d+$/.test(t) && !ADDR_SUFFIX.has(t));
+  }
+  function sameStreet(a, b) {
+    const A = addrNameTokens(a), B = addrNameTokens(b);
+    if (!A.length || !B.length) return false;
+    const setB = new Set(B);
+    const shared = A.filter(t => setB.has(t)).length;
+    return shared >= 1 && (shared / Math.min(A.length, B.length)) >= 0.6;
+  }
+  function addrOverlap(a, b) {
+    const A = new Set(addrTokens(a)), B = new Set(addrTokens(b));
+    if (!A.size || !B.size) return 0;
+    let hit = 0;
+    A.forEach(t => { if (B.has(t)) hit++; });
+    return hit / Math.max(A.size, B.size);
+  }
+  // -> { exact: [lead], similar: [{lead, score}] }  (similar capped at 5)
+  function findAddressMatches(address, excludeId) {
+    const out = { exact: [], similar: [] };
+    const key = addrKey(address);
+    if (!key || key.length < 5) return out;
+    const num = addrHouseNum(address);
+    leads.forEach(l => {
+      if (!l.address || (excludeId && l.id === excludeId)) return;
+      const lk = addrKey(l.address);
+      if (!lk) return;
+      if (lk === key) { out.exact.push(l); return; }
+      const score = addrOverlap(address, l.address);
+      const sameNum = !!num && addrHouseNum(l.address) === num;
+      const contains = lk.length > 5 && key.length > 5 && (lk.indexOf(key) === 0 || key.indexOf(lk) === 0);
+      if (contains || (sameNum && score >= 0.5) || score >= 0.72) {
+        out.similar.push({ lead: l, score, kind: 'near' });
+      } else if (sameStreet(address, l.address)) {
+        // Different house number on what looks like the same street -- not a
+        // duplicate, but worth seeing before you add another record.
+        out.similar.push({ lead: l, score, kind: 'street' });
+      }
+    });
+    out.similar.sort((a, b) => (a.kind === b.kind ? b.score - a.score : (a.kind === 'near' ? -1 : 1)));
+    out.similar = out.similar.slice(0, 5);
+    return out;
+  }
+  function dupLineHtml(l) {
+    return `<li>${escapeHtml(l.address)} <span style="opacity:.7;">(${escapeHtml(l.dealId || '')}${l.status ? ' \u00b7 ' + escapeHtml(l.status) : ''})</span></li>`;
   }
 
   function openDetail(id) {
@@ -1299,7 +1500,7 @@
     overlay.className = 'dl-overlay';
     overlay.innerHTML = `
       <div class="dl-modal">
-        <h2>${escapeHtml(l.address || 'Untitled lead')}</h2>
+        <h2>${escapeHtml(l.address || 'Untitled lead')}${copyAddrBtn(l.address)}</h2>
         <div class="subid">${escapeHtml(l.dealId)} · ${escapeHtml(l.source)}</div>
         <div class="dl-detail-body">
           <div class="dl-stamp ${STATUS_STAMP[l.status] || 'stamp-off'}" style="position:static; display:inline-block; transform:none; margin-bottom:10px;">${escapeHtml(l.status)}</div>
@@ -1391,7 +1592,9 @@
       <div class="dl-modal">
         <h2>${isEdit ? 'Edit lead' : 'New lead'}</h2>
         <form id="dl-form">
-          <div class="dl-field"><label>Property address</label><input type="text" id="f-address" value="${escapeHtml(l.address)}" required /></div>
+          <div class="dl-field"><label>Property address</label><input type="text" id="f-address" value="${escapeHtml(l.address)}" required autocomplete="off" />
+            <div class="dl-dup-warn" id="f-dup-warn" hidden></div>
+          </div>
           <div class="dl-row2">
             <div class="dl-field"><label>Source</label>
               <select id="f-source">
@@ -1504,26 +1707,84 @@
       document.getElementById('f-followup').value = computeNextDate(fuTrackEl.value, Number(fuStageEl.value));
     });
 
-    // Status-driven follow-up date automation (Pat requests #4 & #5).
-    // Offer Sent -> set next follow-up to tomorrow; terminal statuses -> clear it.
-    // Writes into the editable date field, so it stays hand-overridable and the
-    // existing save handler picks it up with no change to the save path.
+    // Status rules, reflected live into the visible fields. The logic itself
+    // lives in statusRuleChanges() up top -- this block only paints the result,
+    // so the form and the save path can never drift apart.
     const fStatusEl = document.getElementById('f-status');
-    const FU_CLEAR_STATUSES = ['Dead', 'Qualified', 'Off-Market', 'Pass'];
     if (fStatusEl) {
       fStatusEl.addEventListener('change', () => {
         const fuInput = document.getElementById('f-followup');
-        if (fStatusEl.value === 'Offer Sent') {
-          const d = new Date(); d.setDate(d.getDate() + 1); // next day
-          fuInput.value = d.toISOString().slice(0, 10);
-        } else if (FU_CLEAR_STATUSES.includes(fStatusEl.value)) {
-          fuInput.value = '';
+        const ch = statusRuleChanges(fStatusEl.value, { followUpTrack: fuTrackEl.value });
+        if (ch.followUpTrack) {
+          // Track only. The follow-up DATE is deliberately left where it was --
+          // moving a rejected lead's date would reshuffle work already on the
+          // calendar. Change the date by hand or via the stage picker.
+          fuTrackEl.value = ch.followUpTrack;
+          populateStageOptions();
+          toast('Follow-up track set to ' + TRACKS[ch.followUpTrack].label + ' \u2014 date unchanged');
         }
+        if (ch.followUpDate !== undefined) fuInput.value = ch.followUpDate;
       });
+    }
+
+    // --- Live duplicate-address check (Pat request) ------------------------
+    // Warns as you type: exact repeat = red, look-alike = amber. Never blocks
+    // typing; an exact repeat also asks for confirmation on save (below).
+    const fAddrEl = document.getElementById('f-address');
+    const dupWarnEl = document.getElementById('f-dup-warn');
+    let dupTimer = null;
+    function runDupCheck() {
+      if (!fAddrEl || !dupWarnEl) return;
+      const hits = findAddressMatches(fAddrEl.value, isEdit ? l.id : null);
+      if (hits.exact.length) {
+        dupWarnEl.className = 'dl-dup-warn dup-exact';
+        dupWarnEl.innerHTML = '<div class="dw-title">\u26a0 Already in the ledger \u2014 exact match</div><ul>'
+          + hits.exact.map(dupLineHtml).join('') + '</ul>';
+        dupWarnEl.hidden = false;
+      } else if (hits.similar.length) {
+        const near = hits.similar.filter(h => h.kind === 'near');
+        const street = hits.similar.filter(h => h.kind === 'street');
+        let html = '';
+        if (near.length) {
+          html += '<div class="dw-title">Possible duplicate \u2014 check before saving</div><ul>'
+            + near.map(h => dupLineHtml(h.lead)).join('') + '</ul>';
+        }
+        if (street.length) {
+          html += '<div class="dw-title"' + (near.length ? ' style="margin-top:6px;"' : '') + '>Already on this street</div><ul>'
+            + street.map(h => dupLineHtml(h.lead)).join('') + '</ul>';
+        }
+        dupWarnEl.className = 'dl-dup-warn';
+        dupWarnEl.innerHTML = html;
+        dupWarnEl.hidden = false;
+      } else {
+        dupWarnEl.hidden = true;
+        dupWarnEl.innerHTML = '';
+      }
+    }
+    if (fAddrEl) {
+      fAddrEl.addEventListener('input', () => {
+        clearTimeout(dupTimer);
+        dupTimer = setTimeout(runDupCheck, 250);
+      });
+      if (!isEdit && fAddrEl.value) runDupCheck();
     }
 
     document.getElementById('dl-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+
+      // Duplicate guard (Pat request): an EXACT address repeat asks for
+      // confirmation before it is written. Look-alikes only warn inline.
+      const addrVal = document.getElementById('f-address').value.trim();
+      const dupHits = findAddressMatches(addrVal, isEdit ? l.id : null);
+      if (dupHits.exact.length) {
+        const first = dupHits.exact[0];
+        const more = dupHits.exact.length > 1 ? '\n...and ' + (dupHits.exact.length - 1) + ' more record(s)' : '';
+        const msg = 'This address is already in the ledger:\n\n'
+          + first.address + '\n' + (first.dealId || '') + ' \u00b7 ' + (first.status || '') + more
+          + '\n\nSave this as a separate record anyway?';
+        if (!confirm(msg)) return;
+      }
+
       const sourceVal = document.getElementById('f-source').value;
       const areaReasons = {};
       AREA_REASONS.forEach(r => {
@@ -1567,6 +1828,12 @@
         lat: (l.lat != null ? l.lat : null),
         lng: (l.lng != null ? l.lng : null),
       };
+
+      // Same rules on the way to the database, so a status set anywhere other
+      // than this form (import, bulk edit, future automation) is treated
+      // identically. Skipped when the status did not change, so hand-edited
+      // follow-up dates survive a save.
+      applyStatusRules(updated, isEdit ? (l.status || '') : undefined);
 
       if (isEdit) {
         leads = leads.map(x => x.id === updated.id ? updated : x);
@@ -1770,6 +2037,8 @@
               <button type="button" data-mode="verdict">Color: Area read</button>
             </div>
             <button class="dl-select" id="dl-map-heat" style="cursor:pointer;">🔥 Heatmap: Off</button>
+            <button class="dl-select" id="dl-map-export-csv" style="cursor:pointer;" title="CSV for Google My Maps import">⬇ CSV</button>
+            <button class="dl-select" id="dl-map-export-kml" style="cursor:pointer;" title="KML for Google My Maps / Google Earth — keeps status colors">⬇ KML</button>
             <button class="dl-btn dl-btn-ghost" id="dl-map-close">Close</button>
           </div>
         </div>
@@ -1782,6 +2051,13 @@
     document.body.appendChild(overlay);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
     document.getElementById('dl-map-close').addEventListener('click', closeOverlay);
+
+    // Map data export (Pat request): writes whatever pins are currently shown
+    // (respects the search box) to a file built for Google My Maps import.
+    // Wired before the Maps guard below so the download still works even if the
+    // Google Maps script fails to load.
+    document.getElementById('dl-map-export-csv').addEventListener('click', () => exportMapCSV(visibleMapped(), unmapped));
+    document.getElementById('dl-map-export-kml').addEventListener('click', () => exportMapKML(visibleMapped(), unmapped));
 
     if (!mapsReady || !window.google || !google.maps) return;
 
@@ -1808,7 +2084,7 @@
       const reasons = AREA_REASONS.filter(r => l.areaReasons && l.areaReasons[r.key]).map(r => r.label);
       const verd = l.areaVerdict ? (AREA_VERDICTS.find(v => v.key === l.areaVerdict) || {}).label : '';
       return `<div class="dl-iw">
-        <div class="iw-addr">${escapeHtml(l.address || 'Untitled')}</div>
+        <div class="iw-addr">${escapeHtml(l.address || 'Untitled')}${copyAddrBtn(l.address)}</div>
         <div class="iw-sub">${escapeHtml(l.dealId)} · ${escapeHtml(l.status)}</div>
         <div class="iw-row">ARV ${fmtMoney(l.arv)} · Offer ${fmtMoney(l.offer)}</div>
         ${verd ? `<div class="iw-row">Area read: <strong>${escapeHtml(verd)}</strong></div>` : ''}
@@ -2005,6 +2281,100 @@
     fromInput.addEventListener('change', updateCustomResult);
     toInput.addEventListener('change', updateCustomResult);
     updateCustomResult();
+  }
+
+  // --- Map data export for Google My Maps (Pat request) --------------------
+  // Google My Maps imports CSV (it uses the Latitude/Longitude columns) and KML
+  // (which also carries the per-status pin colors). Both files are built from the
+  // pins currently visible on the Deal Map.
+  function downloadFile(filename, mime, text) {
+    const blob = new Blob([text], { type: mime + ';charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  function areaVerdictLabel(k) {
+    const v = AREA_VERDICTS.find(x => x.key === (k || ''));
+    return v ? v.label : '';
+  }
+  function areaFlagLabels(l) {
+    return AREA_REASONS.filter(r => l.areaReasons && l.areaReasons[r.key]).map(r => r.label).join('; ');
+  }
+  function mapExportName(ext) {
+    return 'ttv-deal-map-' + new Date().toISOString().slice(0, 10) + '.' + ext;
+  }
+  function exportMapCSV(list, unmappedCount) {
+    if (!list || !list.length) { toast('No plotted leads to export'); return; }
+    const cols = ['Name', 'Address', 'Latitude', 'Longitude', 'Status', 'Area read',
+      'Area flags', 'Deal outcome', 'ARV', 'Offer', 'Follow-up', 'Deal ID', 'Notes'];
+    const escCsv = (v) => {
+      const t = v === null || v === undefined ? '' : String(v);
+      return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+    };
+    const rows = [cols.join(',')];
+    list.forEach(l => {
+      rows.push([
+        l.address || 'Untitled',
+        l.address || '',
+        l.lat, l.lng,
+        l.status || '',
+        areaVerdictLabel(l.areaVerdict),
+        areaFlagLabels(l),
+        l.dealOutcome ? dealOutcomeLabel(l.dealOutcome) : '',
+        l.arv || '', l.offer || '',
+        l.followUpDate || '',
+        l.dealId || '',
+        (l.notes || '').replace(/\s+/g, ' ').slice(0, 300),
+      ].map(escCsv).join(','));
+    });
+    downloadFile(mapExportName('csv'), 'text/csv', rows.join('\n'));
+    toast('Exported ' + list.length + ' pin(s)' + (unmappedCount ? ' \u2014 ' + unmappedCount + ' lead(s) still need geocoding' : ''));
+  }
+  // KML color is aabbggrr, not #rrggbb.
+  function kmlColor(hex) {
+    const h = String(hex || '#6B6459').replace('#', '').toLowerCase();
+    if (h.length !== 6) return 'ff59646b';
+    return 'ff' + h.slice(4, 6) + h.slice(2, 4) + h.slice(0, 2);
+  }
+  function exportMapKML(list, unmappedCount) {
+    if (!list || !list.length) { toast('No plotted leads to export'); return; }
+    const styleId = (st) => 'st-' + String(st || 'none').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const statuses = [...new Set(list.map(l => l.status || 'Unknown'))];
+    let kml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+      + '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n'
+      + '<name>Tide &amp; Timber Deal Map ' + new Date().toISOString().slice(0, 10) + '</name>\n';
+    statuses.forEach(st => {
+      kml += '<Style id="' + styleId(st) + '"><IconStyle><color>' + kmlColor(STATUS_COLOR[st])
+        + '</color><scale>1.1</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/wht-circle.png</href></Icon></IconStyle></Style>\n';
+    });
+    list.forEach(l => {
+      const fields = [
+        ['Deal ID', l.dealId || ''],
+        ['Status', l.status || ''],
+        ['Area read', areaVerdictLabel(l.areaVerdict)],
+        ['Area flags', areaFlagLabels(l)],
+        ['Deal outcome', l.dealOutcome ? dealOutcomeLabel(l.dealOutcome) : ''],
+        ['ARV', l.arv || ''],
+        ['Offer', l.offer || ''],
+        ['Follow-up', l.followUpDate || ''],
+        ['Notes', (l.notes || '').replace(/\s+/g, ' ').slice(0, 300)],
+      ].filter(f => f[1] !== '' && f[1] !== null);
+      kml += '<Placemark><name>' + escapeHtml(l.address || 'Untitled') + '</name>'
+        + '<styleUrl>#' + styleId(l.status) + '</styleUrl>'
+        + '<description>' + escapeHtml(fields.map(f => f[0] + ': ' + f[1]).join(' | ')) + '</description>'
+        + '<ExtendedData>'
+        + fields.map(f => '<Data name="' + escapeHtml(f[0]) + '"><value>' + escapeHtml(String(f[1])) + '</value></Data>').join('')
+        + '</ExtendedData>'
+        + '<Point><coordinates>' + l.lng + ',' + l.lat + ',0</coordinates></Point></Placemark>\n';
+    });
+    kml += '</Document></kml>\n';
+    downloadFile(mapExportName('kml'), 'application/vnd.google-earth.kml+xml', kml);
+    toast('Exported ' + list.length + ' pin(s)' + (unmappedCount ? ' \u2014 ' + unmappedCount + ' lead(s) still need geocoding' : ''));
   }
 
   function exportLeadsCSV() {
