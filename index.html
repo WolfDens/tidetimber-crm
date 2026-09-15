@@ -1607,7 +1607,10 @@
               <div class="dl-fu-main">
                 <div class="dl-fu-sub">
                   <span class="dl-fu-badge ${TRACKS[l.followUpTrack||'followup'].badgeClass}">${TRACKS[l.followUpTrack||'followup'].label} · ${stageLabel(l.followUpTrack||'followup', l.followUpStage||1)}</span>
-                  <span>${l.followUpDate ? 'Due ' + fmtDate(l.followUpDate) : 'No date set'}</span>
+                  <label class="dl-fu-date-wrap" title="Next follow-up date \u2014 change it right here">
+                    <span>Due</span>
+                    <input type="date" class="dl-fu-date" id="dl-detail-fu-date" value="${l.followUpDate || ''}" />
+                  </label>
                 </div>
               </div>
               <div class="dl-fu-actions">
@@ -1636,6 +1639,11 @@
     document.getElementById('dl-detail-stage-select').addEventListener('change', async (e) => {
       const [tk, stage] = e.target.value.split(':');
       await setFollowUpStage(l.id, tk, Number(stage));
+      closeOverlay(); openDetail(l.id);
+    });
+    // Same editable due date as the follow-up queue (Pat, Sept 2026).
+    document.getElementById('dl-detail-fu-date').addEventListener('change', async (e) => {
+      await setFollowUpDate(l.id, e.target.value);
       closeOverlay(); openDetail(l.id);
     });
     document.getElementById('dl-delete-btn').addEventListener('click', async () => {
