@@ -285,6 +285,17 @@
     cursor: pointer; max-width: 150px;
   }
   .dl-btn-sm { font-size: 11.5px; padding: 7px 11px; }
+  /* Editable due date inside the follow-up queue (Pat, Sept 2026). */
+  .dl-fu-date-wrap {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--ink-soft);
+  }
+  .dl-fu-date {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; padding: 5px 7px;
+    border: 1px solid var(--line-strong); background: #fff; border-radius: var(--radius); color: var(--ink);
+  }
+  .dl-fu-row.overdue .dl-fu-date { border-color: var(--sold); }
 
   /* Copy-address button (Pat request): small inline chip next to any address. */
   .dl-copy-addr {
@@ -602,8 +613,10 @@
   //  Every rule Pat has asked for lives here and nowhere else. Add the next
   //  one to this table, not to a UI handler.
   //
-  //    Rejected   -> follow-up TRACK = Rejected  (date left where it was)
-  //    Ghosted    -> follow-up TRACK = Ghosted   (date left where it was)
+  //    Rejected   -> follow-up TRACK = Rejected, stage 1, DATE = today + Rejected cadence (14d)
+  //    Ghosted    -> follow-up TRACK = Ghosted,  stage 1, DATE = today + Ghosted cadence  (14d)
+  //                  (Sept 2026: Pat flagged that the date used to stay put, so a
+  //                   rejected lead kept showing up on the daily cadence.)
   //    Offer Sent -> follow-up DATE  = tomorrow
   //    Escalated  -> follow-up DATE  = tomorrow
   //    Dead / Qualified / Off-Market / Pass -> follow-up DATE cleared
@@ -630,6 +643,7 @@
     if (wantTrack && (cur.followUpTrack || 'followup') !== wantTrack) {
       out.followUpTrack = wantTrack;
       out.followUpStage = 1;
+      out.followUpDate = computeNextDate(wantTrack, 1); // same math as the stage picker
     }
     if (status === 'Offer Sent' || status === STATUS_ESCALATED) {
       out.followUpDate = tomorrowIso();
@@ -779,8 +793,12 @@
     rejected: { label: 'Rejected', items: Array.from({ length: TRACKS.rejected.maxStage }, (_, i) => ({ key: tplKey('rejected', i + 1), stage: i + 1, label: 'Rejected Warm ' + (i + 1) })) },
     ghosted: { label: 'Ghosted', items: Array.from({ length: TRACKS.ghosted.maxStage }, (_, i) => ({ key: tplKey('ghosted', i + 1), stage: i + 1, label: 'Ghosted ' + (i + 1) })) },
     special: { label: 'Special', items: [{ key: tplKey('special', 'UW/Contingent'), stage: 'UW/Contingent', label: 'Back on market (UW/Contingent)' }] },
+    // SMS templates are body-only (no subject). Prep Email shows them as a text
+    // message with just "Copy text" -- the mail buttons are hidden.
+    sms: { label: 'SMS', items: [{ key: tplKey('sms', 'Offer Sent Check-In'), stage: 'Offer Sent Check-In', label: 'Offer sent \u2014 did it come through?' }] },
   };
-  const TEMPLATE_GROUP_ORDER = ['offer', 'followup', 'rejected', 'ghosted', 'special'];
+  const TEMPLATE_GROUP_ORDER = ['offer', 'followup', 'rejected', 'ghosted', 'special', 'sms'];
+  function isSmsKey(key) { return String(key || '').indexOf('sms:') === 0; }
 
   // Verbatim from the user's template sheet.
   const DEFAULT_TEMPLATES = {
@@ -838,6 +856,8 @@
     'ghosted:8': { subject: 'Following up on {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nJust wanted to follow up on our offer for {{PropertyAddress}}.\n\nI haven't heard back, so I wanted to check whether the seller had a chance to review it. If the property is still available, we're still interested and would appreciate any update when you have a moment.\n\nThank you," },
     'ghosted:9': { subject: 'Bumping this up — {{PropertyAddress}}', body: "Hi {{FirstName}},\n\nFollowing up again regarding our offer on {{PropertyAddress}}.\n\nI know things can get busy, so I just wanted to bump this to the top of your inbox. If the seller has made a decision or if there's any feedback you can share, I'd really appreciate it.\n\nLooking forward to hearing from you.\n\nThank you," },
     'special:UW/Contingent': { subject: 'Re: {{PropertyAddress}} — back on the market', body: "Hey {{FirstName}},\n\nI saw that {{PropertyAddress}} is back on the market. We are still interested in the property and are ready to move quickly.\n\nLet me know if the seller is willing to reconsider our offer.\n\nThank you," },
+    // Pat's SMS (Sept 2026): sent right after the offer email goes out.
+    'sms:Offer Sent Check-In': { subject: '', body: "Hi {{FirstName}}, this is Patricia with Tide & Timber Ventures. I just sent over an offer for {{PropertyAddress}} via email. Just wanted to make sure it came through on your end. Thanks!" },
   };
 
   function defaultTemplate(groupKey, stage) {
@@ -977,7 +997,7 @@
     overlay.className = 'dl-overlay';
     overlay.innerHTML = `
       <div class="dl-modal dl-email-modal">
-        <h2>Follow-up email</h2>
+        <h2 id="dl-email-title">Follow-up email</h2>
         <div class="dl-email-meta">
           <span>${escapeHtml(l.address || 'Untitled lead')} · ${escapeHtml(l.dealId)}</span>
           <span>To: ${escapeHtml(l.contactName || '—')}${l.contactEmail ? ' &lt;' + escapeHtml(l.contactEmail) + '&gt;' : ' (no email on file)'}</span>
@@ -986,12 +1006,12 @@
           <div class="lbl">Template (defaults to this lead's current stage — switch anytime)</div>
           <select id="dl-email-tpl-picker" class="dl-select" style="width:100%;">${emailPickerOptionsHtml(l)}</select>
         </div>
-        <div class="dl-email-field">
+        <div class="dl-email-field" id="dl-email-subject-field">
           <div class="lbl">Subject</div>
           <div class="dl-email-subject" id="dl-email-subject">${escapeHtml(subject)}</div>
         </div>
         <div class="dl-email-field">
-          <div class="lbl">Body</div>
+          <div class="lbl" id="dl-email-body-lbl">Body</div>
           <div class="dl-email-body" id="dl-email-body">${escapeHtml(body)}</div>
         </div>
         <div class="dl-modal-actions">
@@ -1007,17 +1027,29 @@
     document.body.appendChild(overlay);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
     document.getElementById('dl-email-close').addEventListener('click', closeOverlay);
+    // SMS templates have no subject and don't go through mail -- swap the modal
+    // into "text message" mode (Copy text is the only action that makes sense).
+    function applyMessageKind(key) {
+      const sms = isSmsKey(key);
+      document.getElementById('dl-email-title').textContent = sms ? 'Text message' : 'Follow-up email';
+      document.getElementById('dl-email-subject-field').hidden = sms;
+      document.getElementById('dl-email-body-lbl').textContent = sms ? 'Message' : 'Body';
+      document.getElementById('dl-email-open').hidden = sms;
+      document.getElementById('dl-email-gmail').hidden = sms;
+    }
+    applyMessageKind(defaultKey);
     document.getElementById('dl-email-tpl-picker').addEventListener('change', (e) => {
       const rendered = renderEmailFromKey(e.target.value, l);
       subject = rendered.subject;
       body = rendered.body;
       document.getElementById('dl-email-subject').textContent = subject;
       document.getElementById('dl-email-body').textContent = body;
+      applyMessageKind(e.target.value);
     });
     document.getElementById('dl-email-copy').addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(body); // body only — subject stays out of the paste
-        toast('Copied email body');
+        toast(isSmsKey(document.getElementById('dl-email-tpl-picker').value) ? 'Copied text message' : 'Copied email body');
       } catch (e) { toast('Copy failed — select the text manually'); }
     });
     // Gmail web compose (Pat request). Opens a Gmail draft in a new tab with the
@@ -1044,9 +1076,9 @@
     overlay.className = 'dl-overlay';
     overlay.innerHTML = `
       <div class="dl-modal dl-tpl-modal">
-        <h2>Email templates</h2>
+        <h2>Email &amp; SMS templates</h2>
         <div class="dl-tpl-hint">
-          Edit the subject and body for each one — these are pulled from your sheet as a starting point. Merge tags fill in automatically:
+          Edit the subject and body for each one — these are pulled from your sheet as a starting point. SMS templates are body-only. Merge tags fill in automatically:
           <div class="dl-merge-tags">
             <code>{{FirstName}}</code> <code>{{PropertyAddress}}</code> <code>{{OfferAmount}}</code>
           </div>
@@ -1081,8 +1113,8 @@
         html += `
           <div class="dl-tpl-stage-block">
             <div class="stage-lbl">${group.label} — ${item.label}</div>
-            <div class="dl-field"><label>Subject</label><input type="text" data-key="${item.key}" data-field="subject" value="${escapeHtml(tpl.subject)}" /></div>
-            <div class="dl-field"><label>Body</label><textarea data-key="${item.key}" data-field="body" style="min-height:110px;">${escapeHtml(tpl.body)}</textarea></div>
+            ${isSmsKey(item.key) ? '' : `<div class="dl-field"><label>Subject</label><input type="text" data-key="${item.key}" data-field="subject" value="${escapeHtml(tpl.subject)}" /></div>`}
+            <div class="dl-field"><label>${isSmsKey(item.key) ? 'Message' : 'Body'}</label><textarea data-key="${item.key}" data-field="body" style="min-height:110px;">${escapeHtml(tpl.body)}</textarea></div>
           </div>`;
       });
       listEl.innerHTML = html;
@@ -1126,7 +1158,7 @@
       return `
         <div class="dl-fu-row ${overdue ? 'overdue' : ''}" data-id="${l.id}">
           <div class="dl-fu-main">
-            <div class="dl-fu-addr">${escapeHtml(l.address || 'Untitled lead')}</div>
+            <div class="dl-fu-addr">${escapeHtml(l.address || 'Untitled lead')}${copyAddrBtn(l.address)}</div>
             <div class="dl-fu-sub">
               <span class="dl-fu-badge ${track.badgeClass}">${track.label} · ${stageLabel(tk, stage)}</span>
               <span>${escapeHtml(l.contactName || 'No contact')}</span>
@@ -1134,6 +1166,10 @@
             </div>
           </div>
           <div class="dl-fu-actions">
+            <label class="dl-fu-date-wrap" title="Next follow-up date \u2014 change it right here">
+              <span>Due</span>
+              <input type="date" class="dl-fu-date" data-action="set-date" data-id="${l.id}" value="${l.followUpDate || ''}" />
+            </label>
             <select class="dl-fu-stage-select" data-action="set-stage" data-id="${l.id}">
               ${stageSelectOptionsHtml(l)}
             </select>
@@ -1158,6 +1194,24 @@
         setFollowUpStage(sel.dataset.id, tk, Number(stage));
       });
     });
+    // Pat (Sept 2026): the date is visible and editable right in the queue.
+    fuEl.querySelectorAll('[data-action="set-date"]').forEach(inp => {
+      inp.addEventListener('click', (e) => e.stopPropagation());
+      inp.addEventListener('change', () => setFollowUpDate(inp.dataset.id, inp.value));
+    });
+  }
+
+  // Hand-set the next follow-up date without touching track or stage. Moving it
+  // into the future drops the row out of today's queue -- that is the point.
+  async function setFollowUpDate(id, iso) {
+    const l = leads.find(x => x.id === id);
+    if (!l) return;
+    l.followUpDate = iso || '';
+    l.lastUpdated = new Date().toISOString().slice(0, 10);
+    render();
+    const ok = await upsertLead(l);
+    if (!ok) { toast('Sync failed \u2014 check your connection and try again'); return; }
+    toast(iso ? 'Follow-up moved to ' + fmtDate(iso) : 'Follow-up date cleared');
   }
 
   const root = document.getElementById('deal-root');
@@ -1737,12 +1791,11 @@
         const fuInput = document.getElementById('f-followup');
         const ch = statusRuleChanges(fStatusEl.value, { followUpTrack: fuTrackEl.value });
         if (ch.followUpTrack) {
-          // Track only. The follow-up DATE is deliberately left where it was --
-          // moving a rejected lead's date would reshuffle work already on the
-          // calendar. Change the date by hand or via the stage picker.
           fuTrackEl.value = ch.followUpTrack;
           populateStageOptions();
-          toast('Follow-up track set to ' + TRACKS[ch.followUpTrack].label + ' \u2014 date unchanged');
+          if (ch.followUpStage) fuStageEl.value = String(ch.followUpStage);
+          toast('Follow-up track set to ' + TRACKS[ch.followUpTrack].label
+            + (ch.followUpDate ? ' \u2014 next follow-up ' + fmtDate(ch.followUpDate) : ''));
         }
         if (ch.followUpDate !== undefined) fuInput.value = ch.followUpDate;
       });
