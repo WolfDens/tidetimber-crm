@@ -2696,8 +2696,13 @@
     } catch (e) {
       console.error('startApp failed', e);
     }
-    if (noteEl && loadFailed) {
-      noteEl.textContent = 'Could not load the shared list — the database is still refusing anonymous access. Ask Brian to update the Supabase policies.';
+    // Supabase RLS does not error on a forbidden read — it returns zero rows. The team
+    // list has never been empty, so an empty result almost certainly means the anon
+    // policies are not in place yet; say so instead of showing an empty pipeline.
+    if (noteEl && (loadFailed || !leads.length)) {
+      noteEl.textContent = loadFailed
+        ? 'Could not load the shared list — the database refused the request. Ask Brian to update the Supabase policies.'
+        : 'No leads came back — if the team list is missing, the database is still refusing anonymous access. Ask Brian to update the Supabase policies.';
     }
   }
 
